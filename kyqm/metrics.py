@@ -17,7 +17,9 @@ def mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 def smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    denom = np.where(np.abs(y_true) + np.abs(y_pred) < 1e-8, 1e-8, np.abs(y_true) + np.abs(y_pred))
+    denom = np.where(
+        np.abs(y_true) + np.abs(y_pred) < 1e-8, 1e-8, np.abs(y_true) + np.abs(y_pred)
+    )
     return float(np.mean(2.0 * np.abs(y_pred - y_true) / denom) * 100.0)
 
 
