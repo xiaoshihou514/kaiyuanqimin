@@ -39,6 +39,7 @@ Defaults come from `swyb/config.toml`:
 - `end_date = 2026-05-21`
 - `cate_id = 170130` (黄瓜, explicit id mode)
 - `output_path = data/market_prices.csv`
+- cached requests are stored under `.cache/swyb`
 - `failure_policy = partial_with_report`
 - includes a `tqdm` progress bar over crawl dates.
 

@@ -14,6 +14,7 @@ class SwybConfig:
     category_name: str | None
     category_path: str | None
     output_path: Path
+    cache_dir: Path
     timeout_seconds: float
     max_attempts: int
     retry_backoff_seconds: float
@@ -53,6 +54,7 @@ def load_config(config_path: Path) -> SwybConfig:
         category_name=_optional_text(swyb.get("category_name")),
         category_path=_optional_text(swyb.get("category_path")),
         output_path=Path(str(swyb.get("output_path", "data/market_prices.csv"))),
+        cache_dir=Path(str(swyb.get("cache_dir", ".cache/swyb"))),
         timeout_seconds=float(swyb.get("timeout_seconds", 10.0)),
         max_attempts=int(swyb.get("max_attempts", 3)),
         retry_backoff_seconds=float(swyb.get("retry_backoff_seconds", 0.5)),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import cpca
 import pandas as pd
 
 FEATURE_COLUMNS = ["local_price", "temp_avg", "precip", "sentiment_score"]
@@ -22,14 +23,22 @@ class PrepareParams:
 
 
 def _province_mask(frame: pd.DataFrame, province_name: str) -> pd.Series:
-    area_match = frame["area_code"].fillna("").astype(str).str.startswith("37")
-    county_match = (
-        frame["county_name"]
-        .fillna("")
-        .astype(str)
-        .str.contains(province_name, regex=False)
-    )
-    return area_match | county_match
+    county_series = frame["county_name"].fillna("").astype(str)
+    parsed = cpca.transform(county_series.tolist(), pos_sensitive=False)
+    parsed_province = parsed["省"].fillna("").astype(str).map(_normalize_province_name)
+    target = _normalize_province_name(province_name)
+    cpca_match = parsed_province == target
+    county_fallback = county_series.str.contains(province_name, regex=False)
+    return cpca_match | county_fallback
+
+
+def _normalize_province_name(name: str) -> str:
+    cleaned = str(name).strip()
+    for suffix in ("省", "市", "自治区", "维吾尔自治区", "回族自治区", "壮族自治区", "特别行政区"):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)]
+            break
+    return cleaned
 
 
 def _clean_local_price(
