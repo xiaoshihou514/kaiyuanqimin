@@ -90,6 +90,8 @@ uv run python -m swyb --config swyb/config.toml
 - GRU + attention (point/median + quantile P10/P90)
 - Prophet baseline (point forecast)
 
+Province and city filtering for market data now use `cpca` parsing from both `market` and `county_name`, with no hardcoded `area_code` province table. `city_name` is optional in `kyqm/config.toml`; when set, only rows with a confidently resolved matching city are retained. `新疆生产建设兵团` rows are still merged into `新疆` totals.
+
 Run all models:
 
 ```bash
@@ -102,6 +104,15 @@ Run a single model:
 uv run python -m kyqm --model lgbm
 uv run python -m kyqm --model gru
 uv run python -m kyqm --model prophet
+```
+
+Optional city filter in `kyqm/config.toml`:
+
+```toml
+[data]
+province_name = "山东省"
+city_name = "淄博"
+product_name = "黄瓜"
 ```
 
 Helpful overrides (mainly for GRU smoke/debug runs):

@@ -7,6 +7,7 @@ import cpca
 import pandas as pd
 
 FEATURE_COLUMNS = ["local_price", "temp_avg", "precip", "sentiment_score"]
+DIRECT_ADMIN_CITIES = {"北京", "天津", "上海", "重庆", "香港", "澳门"}
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class PrepareParams:
     weather_path: Path
     output_path: Path
     province_name: str
+    city_name: str | None
     product_name: str
     start_date: str
     end_date: str
@@ -22,19 +24,116 @@ class PrepareParams:
     outlier_sigma: float
 
 
-def _province_mask(frame: pd.DataFrame, province_name: str) -> pd.Series:
-    county_series = frame["county_name"].fillna("").astype(str)
-    parsed = cpca.transform(county_series.tolist(), pos_sensitive=False)
-    parsed_province = parsed["省"].fillna("").astype(str).map(_normalize_province_name)
-    target = _normalize_province_name(province_name)
-    cpca_match = parsed_province == target
-    county_fallback = county_series.str.contains(province_name, regex=False)
-    return cpca_match | county_fallback
+def _parse_cpca_components(series: pd.Series) -> pd.DataFrame:
+    parsed = cpca.transform(
+        series.fillna("").astype(str).tolist(),
+        pos_sensitive=False,
+    )
+    province = parsed["省"].fillna("").astype(str).map(_normalize_province_name)
+    city = parsed["市"].fillna("").astype(str).map(_normalize_city_name)
+    city = city.where(city != "", province.where(province.isin(DIRECT_ADMIN_CITIES), ""))
+    return pd.DataFrame({"province": province, "city": city}, index=series.index)
+
+
+def _resolve_market_regions(frame: pd.DataFrame) -> pd.DataFrame:
+    county_parsed = _parse_cpca_components(frame["county_name"])
+    market_parsed = _parse_cpca_components(frame["market"])
+
+    county_province = county_parsed["province"]
+    county_city = county_parsed["city"]
+    market_province = market_parsed["province"]
+    market_city = market_parsed["city"]
+
+    resolved_province = pd.Series("", index=frame.index, dtype="object")
+    province_source = pd.Series("unresolved", index=frame.index, dtype="object")
+
+    province_agree = (
+        county_province.ne("")
+        & market_province.ne("")
+        & county_province.eq(market_province)
+    )
+    resolved_province.loc[province_agree] = county_province.loc[province_agree]
+    province_source.loc[province_agree] = "county+market_cpca"
+
+    county_only = resolved_province.eq("") & county_province.ne("")
+    resolved_province.loc[county_only] = county_province.loc[county_only]
+    province_source.loc[county_only] = "county_cpca"
+
+    market_only = resolved_province.eq("") & market_province.ne("")
+    resolved_province.loc[market_only] = market_province.loc[market_only]
+    province_source.loc[market_only] = "market_cpca"
+
+    resolved_city = pd.Series("", index=frame.index, dtype="object")
+    city_source = pd.Series("unresolved", index=frame.index, dtype="object")
+
+    market_city_valid = market_city.ne("") & (
+        market_province.eq("") | market_province.eq(resolved_province)
+    )
+    resolved_city.loc[market_city_valid] = market_city.loc[market_city_valid]
+    city_source.loc[market_city_valid] = "market_cpca"
+
+    county_city_valid = (
+        resolved_city.eq("")
+        & county_city.ne("")
+        & (county_province.eq("") | county_province.eq(resolved_province))
+    )
+    resolved_city.loc[county_city_valid] = county_city.loc[county_city_valid]
+    city_source.loc[county_city_valid] = "county_cpca"
+
+    direct_admin_city = resolved_city.eq("") & resolved_province.isin(DIRECT_ADMIN_CITIES)
+    resolved_city.loc[direct_admin_city] = resolved_province.loc[direct_admin_city]
+    city_source.loc[direct_admin_city] = "direct_admin_province"
+
+    return pd.DataFrame(
+        {
+            "province_cpca_county": county_province,
+            "city_cpca_county": county_city,
+            "province_cpca_market": market_province,
+            "city_cpca_market": market_city,
+            "resolved_province": resolved_province,
+            "resolved_city": resolved_city,
+            "province_resolution_source": province_source,
+            "city_resolution_source": city_source,
+        },
+        index=frame.index,
+    )
 
 
 def _normalize_province_name(name: str) -> str:
     cleaned = str(name).strip()
-    for suffix in ("省", "市", "自治区", "维吾尔自治区", "回族自治区", "壮族自治区", "特别行政区"):
+    alias_map = {
+        "新疆生产建设兵团": "新疆",
+        "新疆兵团": "新疆",
+        "内蒙古": "内蒙古",
+        "广西": "广西",
+        "宁夏": "宁夏",
+        "新疆": "新疆",
+        "西藏": "西藏",
+        "香港": "香港",
+        "澳门": "澳门",
+    }
+    if cleaned in alias_map:
+        return alias_map[cleaned]
+    for suffix in (
+        "维吾尔自治区",
+        "回族自治区",
+        "壮族自治区",
+        "特别行政区",
+        "自治区",
+        "省",
+        "市",
+    ):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)]
+            break
+    return alias_map.get(cleaned, cleaned)
+
+
+def _normalize_city_name(name: str) -> str:
+    cleaned = str(name).strip()
+    if not cleaned:
+        return ""
+    for suffix in ("特别行政区", "自治州", "地区", "盟", "市"):
         if cleaned.endswith(suffix):
             cleaned = cleaned[: -len(suffix)]
             break
@@ -69,7 +168,7 @@ def prepare_training_frame(params: PrepareParams) -> pd.DataFrame:
     market = pd.read_csv(params.market_prices_path)
     weather = pd.read_csv(params.weather_path)
 
-    for required_col in ("date", "product", "price", "area_code", "county_name"):
+    for required_col in ("date", "market", "product", "price", "county_name"):
         if required_col not in market.columns:
             raise ValueError(
                 f"market_prices.csv missing required column: {required_col}"
@@ -84,12 +183,52 @@ def prepare_training_frame(params: PrepareParams) -> pd.DataFrame:
     weather = weather.dropna(subset=["date"]).copy()
 
     product_mask = market["product"].astype(str) == params.product_name
-    province_mask = _province_mask(market, params.province_name)
-    filtered = market.loc[product_mask & province_mask].copy()
+    product_market = market.loc[product_mask].copy()
+    region_resolution = _resolve_market_regions(product_market)
+    product_market = product_market.join(region_resolution)
+
+    target_province = _normalize_province_name(params.province_name)
+    final_mask = product_market["resolved_province"] == target_province
+    target_city = None
+    if params.city_name:
+        target_city = _normalize_city_name(params.city_name)
+        final_mask &= product_market["resolved_city"] == target_city
+
+    filtered = product_market.loc[final_mask].copy()
     if filtered.empty:
+        location_bits = [f"province={params.province_name}"]
+        if params.city_name:
+            location_bits.append(f"city={params.city_name}")
         raise ValueError(
-            f"No records found for province={params.province_name}, product={params.product_name}."
+            f"No records found for {', '.join(location_bits)}, product={params.product_name}."
         )
+
+    province_resolution_counts = (
+        product_market["province_resolution_source"].value_counts().sort_index()
+    )
+    city_resolution_counts = (
+        product_market["city_resolution_source"].value_counts().sort_index()
+    )
+    province_summary = ", ".join(
+        f"{key}={value}" for key, value in province_resolution_counts.items()
+    )
+    city_summary = ", ".join(
+        f"{key}={value}" for key, value in city_resolution_counts.items()
+    )
+    matched_rows = int(final_mask.sum())
+    unresolved_rows = int(product_market["resolved_province"].eq("").sum())
+    unresolved_city_rows = int(product_market["resolved_city"].eq("").sum())
+    city_part = (
+        f", city={params.city_name}, city_resolved_rows={len(product_market) - unresolved_city_rows}"
+        if params.city_name
+        else f", city_resolved_rows={len(product_market) - unresolved_city_rows}"
+    )
+    print(
+        "Province resolution summary "
+        f"(product={params.product_name}, target={params.province_name}): "
+        f"matched_rows={matched_rows}, unresolved_rows={unresolved_rows}{city_part}, "
+        f"province_sources=[{province_summary}], city_sources=[{city_summary}]"
+    )
 
     filtered["price"] = pd.to_numeric(filtered["price"], errors="coerce")
     filtered = filtered.dropna(subset=["price"])

@@ -5,6 +5,13 @@ from pathlib import Path
 import tomllib
 
 
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @dataclass(frozen=True)
 class DataConfig:
     market_prices_path: Path
@@ -12,6 +19,7 @@ class DataConfig:
     cleaned_output_path: Path
     feature_output_path: Path
     province_name: str
+    city_name: str | None
     product_name: str
     start_date: str
     end_date: str
@@ -107,6 +115,7 @@ def load_config(config_path: Path) -> KyqmConfig:
                 str(data.get("feature_output_path", "data/feature_data.csv"))
             ),
             province_name=str(data.get("province_name", "山东省")),
+            city_name=_optional_text(data.get("city_name")),
             product_name=str(data.get("product_name", "黄瓜")),
             start_date=str(data.get("start_date", "2020-01-01")),
             end_date=str(data.get("end_date", "2026-05-21")),
