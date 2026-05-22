@@ -1,0 +1,59 @@
+[data]
+market_prices_path = "data/market_prices.csv"
+weather_path = "data/weather.csv"
+cleaned_output_path = "data/cleaned_data.csv"
+feature_output_path = "data/feature_data.csv"
+province_name = "山东省"
+product_name = "黄瓜"
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+train_end = "2024-12-31"
+val_end = "2025-09-30"
+test_end = "2026-05-21"
+max_forward_fill_days = 3
+outlier_sigma = 3.0
+
+[lgbm]
+enabled = true
+learning_rate = 0.03
+n_estimators = 300
+max_depth = 4
+num_leaves = 15
+min_data_in_leaf = 20
+lambda_l1 = 0.1
+lambda_l2 = 0.5
+early_stopping_rounds = 50
+quantiles_enabled = true
+lower_alpha = 0.1
+upper_alpha = 0.9
+model_output_dir = "data/models/lgbm"
+
+[gru]
+enabled = true
+sequence_length = 30
+hidden_dim = 64
+num_layers = 2
+dropout = 0.3
+batch_size = 32
+epochs = 100
+learning_rate = 0.001
+patience = 15
+weight_decay = 0.0001
+grad_clip_norm = 1.0
+quantiles_enabled = true
+model_output_path = "data/models/gru/model.pth"
+metrics_output_path = "data/models/gru/metrics.json"
+device = "auto"
+
+[prophet]
+enabled = true
+daily_seasonality = true
+weekly_seasonality = true
+yearly_seasonality = true
+model_output_path = "data/models/prophet/model.pkl"
+
+[run]
+model = "all"
+seed = 42
+summary_output_path = "data/model_summary.json"
+prediction_output_dir = "data/predictions"

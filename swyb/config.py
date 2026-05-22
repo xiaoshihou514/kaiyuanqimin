@@ -9,7 +9,10 @@ import tomllib
 class SwybConfig:
     start_date: str
     end_date: str
-    cate_id: int
+    cate_id: int | None
+    category_group: str | None
+    category_name: str | None
+    category_path: str | None
     output_path: Path
     timeout_seconds: float
     max_attempts: int
@@ -17,8 +20,23 @@ class SwybConfig:
     request_interval_seconds: float
     failure_policy: str
     endpoint_url: str
+    category_data_url: str
     referer_url: str
     user_agent: str
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: object) -> int | None:
+    text = _optional_text(value)
+    if text is None:
+        return None
+    return int(text)
 
 
 def load_config(config_path: Path) -> SwybConfig:
@@ -28,9 +46,12 @@ def load_config(config_path: Path) -> SwybConfig:
     swyb = raw.get("swyb", {})
 
     return SwybConfig(
-        start_date=str(swyb.get("start_date", "2022-01-01")),
-        end_date=str(swyb.get("end_date", "2022-04-30")),
-        cate_id=int(swyb.get("cate_id", 170130)),
+        start_date=str(swyb.get("start_date", "2020-01-01")),
+        end_date=str(swyb.get("end_date", "2026-05-21")),
+        cate_id=_optional_int(swyb.get("cate_id", 170130)),
+        category_group=_optional_text(swyb.get("category_group")),
+        category_name=_optional_text(swyb.get("category_name")),
+        category_path=_optional_text(swyb.get("category_path")),
         output_path=Path(str(swyb.get("output_path", "data/market_prices.csv"))),
         timeout_seconds=float(swyb.get("timeout_seconds", 10.0)),
         max_attempts=int(swyb.get("max_attempts", 3)),
@@ -41,6 +62,12 @@ def load_config(config_path: Path) -> SwybConfig:
             swyb.get(
                 "endpoint_url",
                 "https://cif.mofcom.gov.cn/cif/getEnterpriseListForDate.fhtml",
+            )
+        ),
+        category_data_url=str(
+            swyb.get(
+                "category_data_url",
+                "https://cif.mofcom.gov.cn/cif/resDataIndex/js/riduData.js",
             )
         ),
         referer_url=str(

@@ -24,8 +24,12 @@ def province_plus_city(city_daily: pd.DataFrame) -> pd.DataFrame:
         .sort_values("date")
     )
 
-    temp_wide = city_daily.pivot(index="date", columns="city", values="temp_avg").add_prefix("temp_avg_")
-    precip_wide = city_daily.pivot(index="date", columns="city", values="precip").add_prefix("precip_")
+    temp_wide = city_daily.pivot(
+        index="date", columns="city", values="temp_avg"
+    ).add_prefix("temp_avg_")
+    precip_wide = city_daily.pivot(
+        index="date", columns="city", values="precip"
+    ).add_prefix("precip_")
     city_wide = temp_wide.join(precip_wide)
 
     merged = province_daily.set_index("date").join(city_wide, how="left").reset_index()

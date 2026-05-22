@@ -40,8 +40,8 @@ def load_config(config_path: Path) -> WeatherConfig:
     ]
 
     return WeatherConfig(
-        start_date=str(weather.get("start_date", "2022-01-01")),
-        end_date=str(weather.get("end_date", "2026-04-30")),
+        start_date=str(weather.get("start_date", "2020-01-01")),
+        end_date=str(weather.get("end_date", "2026-05-21")),
         output_path=Path(str(weather.get("output_path", "data/weather.csv"))),
         cache_dir=Path(str(weather.get("cache_dir", ".cache/openmeteo"))),
         cities=cities,

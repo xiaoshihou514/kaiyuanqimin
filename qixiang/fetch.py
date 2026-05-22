@@ -14,7 +14,9 @@ OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
 def build_client(cache_dir: Path) -> openmeteo_requests.Client:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    session = requests_cache.CachedSession(str(cache_dir / "weather_cache"), expire_after=-1)
+    session = requests_cache.CachedSession(
+        str(cache_dir / "weather_cache"), expire_after=-1
+    )
     retry_session = retry(session, retries=5, backoff_factor=0.2)
     return openmeteo_requests.Client(session=retry_session)
 

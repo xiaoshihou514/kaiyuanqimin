@@ -1,13 +1,19 @@
 [swyb]
-start_date = "2022-01-01"
-end_date = "2022-04-30"
+start_date = "2020-01-01"
+end_date = "2026-05-21"
 cate_id = 170130
+# When cate_id is set, category selectors below are ignored.
+# To resolve by category name, set cate_id="" and use category_path or (category_group + category_name).
+category_group = ""
+category_name = ""
+category_path = ""
 output_path = "data/market_prices.csv"
 timeout_seconds = 10.0
-max_attempts = 3
+max_attempts = 999999999999999
 retry_backoff_seconds = 0.5
 request_interval_seconds = 0.15
 failure_policy = "partial_with_report"
 endpoint_url = "https://cif.mofcom.gov.cn/cif/getEnterpriseListForDate.fhtml"
+category_data_url = "https://cif.mofcom.gov.cn/cif/resDataIndex/js/riduData.js"
 referer_url = "https://cif.mofcom.gov.cn/cif/html/dataCenter2021/index.html?jgnfcprd"
 user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
