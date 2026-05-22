@@ -105,6 +105,7 @@ def run(
             weather_path=cfg.data.weather_path,
             output_path=cfg.data.cleaned_output_path,
             province_name=cfg.data.province_name,
+            city_name=cfg.data.city_name,
             product_name=cfg.data.product_name,
             start_date=cfg.data.start_date,
             end_date=cfg.data.end_date,
