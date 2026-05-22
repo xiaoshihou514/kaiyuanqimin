@@ -13,8 +13,15 @@ from .prepare import PrepareParams, prepare_training_frame
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train multi-model forecasting pipeline for agricultural prices.")
-    parser.add_argument("--config", type=Path, default=Path("kyqm/config.toml"), help="Path to kyqm config TOML.")
+    parser = argparse.ArgumentParser(
+        description="Train multi-model forecasting pipeline for agricultural prices."
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("kyqm/config.toml"),
+        help="Path to kyqm config TOML.",
+    )
     parser.add_argument(
         "--model",
         type=str,
@@ -23,9 +30,15 @@ def parse_args() -> argparse.Namespace:
         help="Run specific model path.",
     )
     parser.add_argument("--epochs", type=int, default=None, help="Override GRU epochs.")
-    parser.add_argument("--batch-size", type=int, default=None, help="Override GRU batch size.")
-    parser.add_argument("--learning-rate", type=float, default=None, help="Override GRU learning rate.")
-    parser.add_argument("--device", type=str, default=None, help="Override GRU device (cpu/cuda/auto).")
+    parser.add_argument(
+        "--batch-size", type=int, default=None, help="Override GRU batch size."
+    )
+    parser.add_argument(
+        "--learning-rate", type=float, default=None, help="Override GRU learning rate."
+    )
+    parser.add_argument(
+        "--device", type=str, default=None, help="Override GRU device (cpu/cuda/auto)."
+    )
     return parser.parse_args()
 
 
@@ -176,11 +189,15 @@ def run(
         summary["prophet"] = prophet_result.metrics
 
     cfg.run.summary_output_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.run.summary_output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    cfg.run.summary_output_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"Saved feature table to: {cfg.data.feature_output_path}")
     print(f"Saved model summary to: {cfg.run.summary_output_path}")
     for name, metrics in summary.items():
-        print(f"{name}: MAE={metrics.get('test_mae', float('nan')):.4f}, RMSE={metrics.get('test_rmse', float('nan')):.4f}")
+        print(
+            f"{name}: MAE={metrics.get('test_mae', float('nan')):.4f}, RMSE={metrics.get('test_rmse', float('nan')):.4f}"
+        )
     return summary
 
 

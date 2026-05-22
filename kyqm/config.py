@@ -96,10 +96,16 @@ def load_config(config_path: Path) -> KyqmConfig:
 
     return KyqmConfig(
         data=DataConfig(
-            market_prices_path=Path(str(data.get("market_prices_path", "data/market_prices.csv"))),
+            market_prices_path=Path(
+                str(data.get("market_prices_path", "data/market_prices.csv"))
+            ),
             weather_path=Path(str(data.get("weather_path", "data/weather.csv"))),
-            cleaned_output_path=Path(str(data.get("cleaned_output_path", "data/cleaned_data.csv"))),
-            feature_output_path=Path(str(data.get("feature_output_path", "data/feature_data.csv"))),
+            cleaned_output_path=Path(
+                str(data.get("cleaned_output_path", "data/cleaned_data.csv"))
+            ),
+            feature_output_path=Path(
+                str(data.get("feature_output_path", "data/feature_data.csv"))
+            ),
             province_name=str(data.get("province_name", "山东省")),
             product_name=str(data.get("product_name", "黄瓜")),
             start_date=str(data.get("start_date", "2020-01-01")),
@@ -123,7 +129,9 @@ def load_config(config_path: Path) -> KyqmConfig:
             quantiles_enabled=bool(lgbm.get("quantiles_enabled", True)),
             lower_alpha=float(lgbm.get("lower_alpha", 0.1)),
             upper_alpha=float(lgbm.get("upper_alpha", 0.9)),
-            model_output_dir=Path(str(lgbm.get("model_output_dir", "data/models/lgbm"))),
+            model_output_dir=Path(
+                str(lgbm.get("model_output_dir", "data/models/lgbm"))
+            ),
         ),
         gru=GruConfig(
             enabled=bool(gru.get("enabled", True)),
@@ -138,8 +146,12 @@ def load_config(config_path: Path) -> KyqmConfig:
             weight_decay=float(gru.get("weight_decay", 1e-4)),
             grad_clip_norm=float(gru.get("grad_clip_norm", 1.0)),
             quantiles_enabled=bool(gru.get("quantiles_enabled", True)),
-            model_output_path=Path(str(gru.get("model_output_path", "data/models/gru/model.pth"))),
-            metrics_output_path=Path(str(gru.get("metrics_output_path", "data/models/gru/metrics.json"))),
+            model_output_path=Path(
+                str(gru.get("model_output_path", "data/models/gru/model.pth"))
+            ),
+            metrics_output_path=Path(
+                str(gru.get("metrics_output_path", "data/models/gru/metrics.json"))
+            ),
             device=str(gru.get("device", "auto")),
         ),
         prophet=ProphetConfig(
@@ -147,12 +159,18 @@ def load_config(config_path: Path) -> KyqmConfig:
             daily_seasonality=bool(prophet.get("daily_seasonality", True)),
             weekly_seasonality=bool(prophet.get("weekly_seasonality", True)),
             yearly_seasonality=bool(prophet.get("yearly_seasonality", True)),
-            model_output_path=Path(str(prophet.get("model_output_path", "data/models/prophet/model.pkl"))),
+            model_output_path=Path(
+                str(prophet.get("model_output_path", "data/models/prophet/model.pkl"))
+            ),
         ),
         run=RunConfig(
             model=str(run.get("model", "all")),
             seed=int(run.get("seed", 42)),
-            summary_output_path=Path(str(run.get("summary_output_path", "data/model_summary.json"))),
-            prediction_output_dir=Path(str(run.get("prediction_output_dir", "data/predictions"))),
+            summary_output_path=Path(
+                str(run.get("summary_output_path", "data/model_summary.json"))
+            ),
+            prediction_output_dir=Path(
+                str(run.get("prediction_output_dir", "data/predictions"))
+            ),
         ),
     )

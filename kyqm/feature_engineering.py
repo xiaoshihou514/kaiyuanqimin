@@ -57,12 +57,20 @@ def build_feature_table(cleaned: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def split_by_time(frame: pd.DataFrame, *, train_end: str, val_end: str, test_end: str) -> FeatureSplits:
+def split_by_time(
+    frame: pd.DataFrame, *, train_end: str, val_end: str, test_end: str
+) -> FeatureSplits:
     data = frame.copy()
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
     train = data[data["date"] <= pd.Timestamp(train_end)].copy()
-    val = data[(data["date"] > pd.Timestamp(train_end)) & (data["date"] <= pd.Timestamp(val_end))].copy()
-    test = data[(data["date"] > pd.Timestamp(val_end)) & (data["date"] <= pd.Timestamp(test_end))].copy()
+    val = data[
+        (data["date"] > pd.Timestamp(train_end))
+        & (data["date"] <= pd.Timestamp(val_end))
+    ].copy()
+    test = data[
+        (data["date"] > pd.Timestamp(val_end))
+        & (data["date"] <= pd.Timestamp(test_end))
+    ].copy()
     if train.empty or val.empty or test.empty:
         raise ValueError("Feature split produced empty train/val/test partition.")
     return FeatureSplits(train=train, val=val, test=test)

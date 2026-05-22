@@ -73,5 +73,7 @@ def train_prophet_model(
         "test_smape": smape(y_true, y_pred),
     }
     metrics_path = model_output_path.with_name("metrics.json")
-    metrics_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    metrics_path.write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return ProphetResult(metrics=metrics, prediction_path=prediction_path)

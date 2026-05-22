@@ -23,15 +23,26 @@ class AdditiveAttention(nn.Module):
         self.key = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.energy = nn.Linear(hidden_dim, 1, bias=False)
 
-    def forward(self, outputs: torch.Tensor, last_hidden: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        score = self.energy(torch.tanh(self.query(last_hidden).unsqueeze(1) + self.key(outputs))).squeeze(-1)
+    def forward(
+        self, outputs: torch.Tensor, last_hidden: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        score = self.energy(
+            torch.tanh(self.query(last_hidden).unsqueeze(1) + self.key(outputs))
+        ).squeeze(-1)
         weights = torch.softmax(score, dim=1)
         context = torch.bmm(weights.unsqueeze(1), outputs).squeeze(1)
         return context, weights
 
 
 class GruAttentionRegressor(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float, output_dim: int) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        num_layers: int,
+        dropout: float,
+        output_dim: int,
+    ) -> None:
         super().__init__()
         gru_dropout = dropout if num_layers > 1 else 0.0
         self.gru = nn.GRU(
@@ -77,16 +88,22 @@ def _resolve_device(device: str) -> torch.device:
     return torch.device(device)
 
 
-def _standardize(train_values: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _standardize(
+    train_values: np.ndarray, values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     mean = train_values.mean(axis=0)
     std = train_values.std(axis=0)
     std[std == 0] = 1.0
     return (values - mean) / std, mean, std
 
 
-def _make_sequences(features: np.ndarray, target: np.ndarray, seq_len: int) -> tuple[np.ndarray, np.ndarray]:
+def _make_sequences(
+    features: np.ndarray, target: np.ndarray, seq_len: int
+) -> tuple[np.ndarray, np.ndarray]:
     if len(features) <= seq_len:
-        raise ValueError(f"Not enough rows ({len(features)}) for sequence length {seq_len}.")
+        raise ValueError(
+            f"Not enough rows ({len(features)}) for sequence length {seq_len}."
+        )
     xs, ys = [], []
     for idx in range(seq_len, len(features)):
         xs.append(features[idx - seq_len : idx])
@@ -94,15 +111,21 @@ def _make_sequences(features: np.ndarray, target: np.ndarray, seq_len: int) -> t
     return np.stack(xs).astype(np.float32), np.array(ys, dtype=np.float32)
 
 
-def _to_loader(x: np.ndarray, y: np.ndarray, batch_size: int, shuffle: bool) -> DataLoader:
+def _to_loader(
+    x: np.ndarray, y: np.ndarray, batch_size: int, shuffle: bool
+) -> DataLoader:
     return DataLoader(
-        TensorDataset(torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)),
+        TensorDataset(
+            torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
+        ),
         batch_size=batch_size,
         shuffle=shuffle,
     )
 
 
-def _pinball_loss(pred: torch.Tensor, target: torch.Tensor, quantile: float) -> torch.Tensor:
+def _pinball_loss(
+    pred: torch.Tensor, target: torch.Tensor, quantile: float
+) -> torch.Tensor:
     diff = target - pred
     return torch.mean(torch.maximum(quantile * diff, (quantile - 1.0) * diff))
 
@@ -129,7 +152,11 @@ def _run_epoch(
             pred, _ = model(x)
             if quantiles_enabled:
                 p10, p50, p90 = pred[:, 0], pred[:, 1], pred[:, 2]
-                loss = (_pinball_loss(p10, y, 0.1) + _pinball_loss(p50, y, 0.5) + _pinball_loss(p90, y, 0.9)) / 3.0
+                loss = (
+                    _pinball_loss(p10, y, 0.1)
+                    + _pinball_loss(p50, y, 0.5)
+                    + _pinball_loss(p90, y, 0.9)
+                ) / 3.0
             else:
                 loss = huber(pred[:, 0], y)
             if optimizer is not None:
@@ -203,12 +230,16 @@ def train_gru_model(
         dropout=dropout,
         output_dim=output_dim,
     ).to(resolved_device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay
+    )
 
     best_val = float("inf")
     best_state: dict[str, torch.Tensor] | None = None
     wait = 0
-    for epoch in tqdm(range(1, epochs + 1), desc="GRU epochs", unit="epoch", dynamic_ncols=True):
+    for epoch in tqdm(
+        range(1, epochs + 1), desc="GRU epochs", unit="epoch", dynamic_ncols=True
+    ):
         _run_epoch(
             model,
             train_loader,
@@ -229,7 +260,9 @@ def train_gru_model(
         )
         if val_loss < best_val:
             best_val = val_loss
-            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            best_state = {
+                k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+            }
             wait = 0
         else:
             wait += 1
@@ -282,7 +315,10 @@ def train_gru_model(
     prediction_path = prediction_output_dir / "gru_predictions.csv"
     pd.DataFrame(
         {
-            "date": test_df["date"].iloc[sequence_length:].dt.strftime("%Y-%m-%d").reset_index(drop=True),
+            "date": test_df["date"]
+            .iloc[sequence_length:]
+            .dt.strftime("%Y-%m-%d")
+            .reset_index(drop=True),
             "y_true": y_true,
             "y_pred": y_pred,
             "y_pred_p10": p10,
@@ -304,5 +340,7 @@ def train_gru_model(
         metrics["test_interval_width"] = interval_mean_width(p10, p90)
 
     metrics_output_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics_output_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    metrics_output_path.write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return GruResult(metrics=metrics, prediction_path=prediction_path)
