@@ -42,10 +42,14 @@ def response_to_frame(response: dict[str, Any], fallback_date: str) -> pd.DataFr
                 "price_3": _to_float(item.get("PRICE3")),
                 "area_code": str(item.get("AREA") or ""),
                 "county_name": str(item.get("COUNTY_NAME") or ""),
-                "enterprise_id": int(item["ENTERID"]) if item.get("ENTERID") is not None else None,
-                "commodity_id": int(item["COMMDITY_ID"])
-                if item.get("COMMDITY_ID") is not None
-                else None,
+                "enterprise_id": (
+                    int(item["ENTERID"]) if item.get("ENTERID") is not None else None
+                ),
+                "commodity_id": (
+                    int(item["COMMDITY_ID"])
+                    if item.get("COMMDITY_ID") is not None
+                    else None
+                ),
             }
         )
 
@@ -53,5 +57,7 @@ def response_to_frame(response: dict[str, Any], fallback_date: str) -> pd.DataFr
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
     frame = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
-    frame = frame.sort_values(["date", "market", "report_date"], kind="stable").reset_index(drop=True)
+    frame = frame.sort_values(
+        ["date", "market", "report_date"], kind="stable"
+    ).reset_index(drop=True)
     return frame

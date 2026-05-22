@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+from tqdm import tqdm
 
 from .config import load_config
 from .fetch import build_client, fetch_city_hourly
@@ -11,20 +12,33 @@ from .transform import hourly_to_city_daily, province_plus_city
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fetch and aggregate weather data for Shandong.")
+    parser = argparse.ArgumentParser(
+        description="Fetch and aggregate weather data for Shandong."
+    )
     parser.add_argument(
         "--config",
         type=Path,
         default=Path("qixiang/config.toml"),
         help="Path to weather config TOML.",
     )
-    parser.add_argument("--start-date", type=str, default=None, help="Override start date YYYY-MM-DD.")
-    parser.add_argument("--end-date", type=str, default=None, help="Override end date YYYY-MM-DD.")
-    parser.add_argument("--output-path", type=Path, default=None, help="Override output CSV path.")
+    parser.add_argument(
+        "--start-date", type=str, default=None, help="Override start date YYYY-MM-DD."
+    )
+    parser.add_argument(
+        "--end-date", type=str, default=None, help="Override end date YYYY-MM-DD."
+    )
+    parser.add_argument(
+        "--output-path", type=Path, default=None, help="Override output CSV path."
+    )
     return parser.parse_args()
 
 
-def run(config_path: Path, start_date: str | None, end_date: str | None, output_path: Path | None) -> Path:
+def run(
+    config_path: Path,
+    start_date: str | None,
+    end_date: str | None,
+    output_path: Path | None,
+) -> Path:
     cfg = load_config(config_path)
     effective_start = start_date or cfg.start_date
     effective_end = end_date or cfg.end_date
@@ -32,7 +46,9 @@ def run(config_path: Path, start_date: str | None, end_date: str | None, output_
 
     client = build_client(cfg.cache_dir)
     city_daily_frames: list[pd.DataFrame] = []
-    for city in cfg.cities:
+    for city in tqdm(
+        cfg.cities, desc="Weather cities", unit="city", dynamic_ncols=True
+    ):
         hourly = fetch_city_hourly(client, city, effective_start, effective_end)
         city_daily_frames.append(hourly_to_city_daily(hourly))
 
