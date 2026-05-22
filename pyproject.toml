@@ -5,6 +5,7 @@ description = "Multi-source agricultural price forecasting pipeline"
 readme = "README.md"
 requires-python = ">=3.12.3"
 dependencies = [
+    "cpca>=0.5.5",
     "lightgbm>=4.6.0",
     "numpy>=2.4.6",
     "openmeteo-requests>=1.7.5",

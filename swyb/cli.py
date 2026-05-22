@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from .config import SwybConfig, load_config
 from .fetch import (
+    build_client,
     fetch_daily_category_map,
     fetch_for_date,
     iter_dates,
@@ -105,6 +106,7 @@ def _effective_config(
         category_name=category_name or cfg.category_name,
         category_path=category_path or cfg.category_path,
         output_path=output_path or cfg.output_path,
+        cache_dir=cfg.cache_dir,
         timeout_seconds=cfg.timeout_seconds,
         max_attempts=cfg.max_attempts,
         retry_backoff_seconds=cfg.retry_backoff_seconds,
@@ -120,7 +122,9 @@ def _effective_config(
 def _resolve_cate_id(cfg: SwybConfig) -> int:
     if cfg.cate_id is not None:
         return cfg.cate_id
+    client = build_client(cfg.cache_dir / "mapping")
     category_map = fetch_daily_category_map(
+        client=client,
         category_data_url=cfg.category_data_url,
         referer_url=cfg.referer_url,
         user_agent=cfg.user_agent,
@@ -139,6 +143,7 @@ def _resolve_cate_id(cfg: SwybConfig) -> int:
 def _fetch_single_category(
     cfg: SwybConfig, *, cate_id: int, all_dates: list[date]
 ) -> tuple[pd.DataFrame, int, int]:
+    client = build_client(cfg.cache_dir / f"cate_{cate_id}")
     frames: list[pd.DataFrame] = []
     failed_dates = 0
     empty_dates = 0
@@ -151,6 +156,7 @@ def _fetch_single_category(
         date_str = day.isoformat()
         try:
             response = fetch_for_date(
+                client=client,
                 endpoint_url=cfg.endpoint_url,
                 referer_url=cfg.referer_url,
                 user_agent=cfg.user_agent,
@@ -221,7 +227,9 @@ def _resolve_all_output_path(
 
 
 def _run_all_categories(cfg: SwybConfig, all_dates: list[date]) -> Path:
+    map_client = build_client(cfg.cache_dir / "mapping")
     category_map = fetch_daily_category_map(
+        client=map_client,
         category_data_url=cfg.category_data_url,
         referer_url=cfg.referer_url,
         user_agent=cfg.user_agent,

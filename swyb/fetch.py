@@ -5,9 +5,12 @@ import json
 import random
 import re
 import time
+from pathlib import Path
 from typing import Any
-from urllib import parse, request
-from urllib.error import HTTPError, URLError
+
+import requests_cache
+from retry_requests import retry
+from urllib.parse import urlencode
 
 BLOCK_MARKERS = (
     "captcha",
@@ -48,6 +51,16 @@ class AntiScrapeBlockedError(RuntimeError):
     """Raised when anti-scrape or bot wall behavior is detected."""
 
 
+def build_client(cache_dir: Path) -> requests_cache.session.CachedSession:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    session = requests_cache.CachedSession(
+        str(cache_dir / "swyb_cache"),
+        expire_after=-1,
+        allowable_methods=("GET", "POST"),
+    )
+    return retry(session, retries=5, backoff_factor=0.2)
+
+
 def _looks_like_block(content_type: str, raw_text: str) -> bool:
     lowered = raw_text.lower()
     marker_hit = any(marker in lowered for marker in BLOCK_MARKERS)
@@ -79,6 +92,7 @@ def _request_headers(user_agent: str, referer_url: str) -> dict[str, str]:
 
 def fetch_daily_category_map(
     *,
+    client: requests_cache.session.CachedSession,
     category_data_url: str,
     referer_url: str,
     user_agent: str,
@@ -90,16 +104,12 @@ def fetch_daily_category_map(
         raise ValueError("max_attempts must be >= 1.")
 
     for attempt in range(1, max_attempts + 1):
-        req = request.Request(
-            url=category_data_url,
-            headers={**_request_headers(user_agent, referer_url), "Accept": "*/*"},
-            method="GET",
-        )
+        headers = {**_request_headers(user_agent, referer_url), "Accept": "*/*"}
         try:
-            with request.urlopen(req, timeout=timeout_seconds) as resp:
-                content_type = str(resp.headers.get("Content-Type", ""))
-                raw = resp.read().decode("utf-8", errors="replace")
-
+            resp = client.get(category_data_url, headers=headers, timeout=timeout_seconds)
+            resp.raise_for_status()
+            content_type = str(resp.headers.get("Content-Type", ""))
+            raw = resp.text
             if _looks_like_block(content_type, raw):
                 raise AntiScrapeBlockedError(
                     "Detected anti-scrape/block response signature."
@@ -108,13 +118,7 @@ def fetch_daily_category_map(
             if not parsed:
                 raise ValueError("No category mapping found in riduData.js response.")
             return parsed
-        except (
-            AntiScrapeBlockedError,
-            HTTPError,
-            URLError,
-            TimeoutError,
-            ValueError,
-        ) as exc:
+        except Exception as exc:  # requests-cache / requests can raise multiple exception types
             if attempt == max_attempts:
                 raise RuntimeError(
                     f"Failed fetching category map after {max_attempts} attempt(s)."
@@ -237,6 +241,7 @@ def _display_group_name(group_key: str) -> str:
 
 def fetch_for_date(
     *,
+    client: requests_cache.session.CachedSession,
     endpoint_url: str,
     referer_url: str,
     user_agent: str,
@@ -249,22 +254,23 @@ def fetch_for_date(
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1.")
 
-    payload = parse.urlencode(
-        {"cateId": str(cate_id), "searchDate": search_date.isoformat()}
-    ).encode("utf-8")
+    payload = urlencode({"cateId": str(cate_id), "searchDate": search_date.isoformat()})
 
     for attempt in range(1, max_attempts + 1):
         headers = {
             **_request_headers(user_agent, referer_url),
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         }
-        req = request.Request(
-            url=endpoint_url, data=payload, headers=headers, method="POST"
-        )
         try:
-            with request.urlopen(req, timeout=timeout_seconds) as resp:
-                content_type = str(resp.headers.get("Content-Type", ""))
-                raw = resp.read().decode("utf-8", errors="replace")
+            resp = client.post(
+                endpoint_url,
+                data=payload,
+                headers=headers,
+                timeout=timeout_seconds,
+            )
+            resp.raise_for_status()
+            content_type = str(resp.headers.get("Content-Type", ""))
+            raw = resp.text
 
             if _looks_like_block(content_type, raw):
                 raise AntiScrapeBlockedError(
@@ -277,14 +283,7 @@ def fetch_for_date(
             if "datas" not in parsed:
                 raise ValueError("Response JSON missing 'datas' key.")
             return parsed
-        except (
-            AntiScrapeBlockedError,
-            HTTPError,
-            URLError,
-            TimeoutError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as exc:
+        except Exception as exc:
             if attempt == max_attempts:
                 raise RuntimeError(
                     f"Failed fetching {search_date.isoformat()} after {max_attempts} attempt(s)."
