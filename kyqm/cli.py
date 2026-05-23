@@ -167,7 +167,11 @@ def run(
         test_end=cfg.data.test_end,
     )
     feature_cols = feature_columns(feature_df)
-    lightgbm_feature_cols = lgbm_feature_columns(feature_df)
+    lightgbm_feature_cols = lgbm_feature_columns(
+        feature_df,
+        include_beijing=cfg.lgbm.use_beijing_lead_features,
+        include_refined_weather=cfg.lgbm.use_refined_weather_features,
+    )
     recurrent_feature_cols = [
         column for column in CORE_RECURRENT_COLUMNS if column in feature_df.columns
     ]

@@ -54,6 +54,14 @@ def build_feature_table(cleaned: pd.DataFrame, *, forecast_horizon: int = 1) -> 
             if f"{column}_lag7" in frame.columns:
                 frame = frame.drop(columns=[f"{column}_lag7"])
 
+    if "beijing_cucumber_price" in frame.columns:
+        frame["beijing_cucumber_price_lag2"] = frame["beijing_cucumber_price"].shift(2)
+        frame["sd_beijing_spread"] = (
+            frame[LOCAL_PRICE_COLUMN] - frame["beijing_cucumber_price"]
+        )
+        frame["sd_beijing_spread_lag1"] = frame["sd_beijing_spread"].shift(1)
+        frame["sd_beijing_spread_lag2"] = frame["sd_beijing_spread"].shift(2)
+
     frame["temp_lag_1"] = frame["temp_avg"].shift(1)
     frame["temp_lag_3"] = frame["temp_avg"].shift(3)
     frame["precip_lag_1"] = frame["precip"].shift(1)
@@ -105,11 +113,45 @@ def feature_columns(frame: pd.DataFrame) -> list[str]:
     ]
 
 
-def lgbm_feature_columns(frame: pd.DataFrame) -> list[str]:
+def lgbm_feature_columns(
+    frame: pd.DataFrame,
+    *,
+    include_beijing: bool = False,
+    include_refined_weather: bool = False,
+) -> list[str]:
+    beijing_features = {
+        "beijing_cucumber_price",
+        "beijing_cucumber_price_lag1",
+        "beijing_cucumber_price_lag2",
+        "sd_beijing_spread",
+        "sd_beijing_spread_lag1",
+        "sd_beijing_spread_lag2",
+    }
+    refined_weather_features = {
+        "temp_avg",
+        "precip",
+        "temp_lag_1",
+        "temp_lag_3",
+        "precip_lag_1",
+        "precip_lag_3",
+        "precip_sum_3d",
+        "precip_sum_7d",
+        "temp_mean_7d",
+        "temp_change_1d",
+        "precip_change_1d",
+        "extreme_precip_flag",
+        "heatwave_3d_flag",
+    }
+    selected_named_features = set()
+    if include_beijing:
+        selected_named_features.update(beijing_features)
+    if include_refined_weather:
+        selected_named_features.update(refined_weather_features)
     return [
         col
         for col in feature_columns(frame)
         if col.startswith("lag_")
         or col.startswith("roll_")
         or col.startswith("price_diff_")
+        or col in selected_named_features
     ]

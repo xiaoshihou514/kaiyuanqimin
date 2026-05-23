@@ -32,6 +32,8 @@ lower_alpha = 0.1
 upper_alpha = 0.9
 cv_splits = 5
 use_prophet_components = false
+use_beijing_lead_features = false
+use_refined_weather_features = false
 model_output_dir = "data/models/lgbm"
 
 [gru]

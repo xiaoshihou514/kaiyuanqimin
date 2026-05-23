@@ -60,6 +60,8 @@ class LgbmConfig:
     upper_alpha: float
     cv_splits: int
     use_prophet_components: bool
+    use_beijing_lead_features: bool
+    use_refined_weather_features: bool
     model_output_dir: Path
 
 
@@ -185,6 +187,12 @@ def load_config(config_path: Path) -> KyqmConfig:
             upper_alpha=float(lgbm.get("upper_alpha", 0.9)),
             cv_splits=int(lgbm.get("cv_splits", 5)),
             use_prophet_components=bool(lgbm.get("use_prophet_components", False)),
+            use_beijing_lead_features=bool(
+                lgbm.get("use_beijing_lead_features", False)
+            ),
+            use_refined_weather_features=bool(
+                lgbm.get("use_refined_weather_features", False)
+            ),
             model_output_dir=Path(
                 str(lgbm.get("model_output_dir", "data/models/lgbm"))
             ),
