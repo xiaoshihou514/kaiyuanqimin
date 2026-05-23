@@ -248,6 +248,70 @@ def build_long_horizon_feature_table(
             - frame.at[anchor_idx - 7, LOCAL_PRICE_COLUMN]
         )
         recent_vol_anchor = max(float(history[LOCAL_PRICE_COLUMN].tail(30).std(ddof=0)), 1e-6)
+        anchor_price = float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN])
+        prior_frame = frame.iloc[: anchor_idx + 1].copy()
+        month_temp_history = prior_frame.loc[
+            prior_frame["date"].dt.month == target_month, "temp_avg"
+        ].dropna()
+        if len(month_temp_history) < 20:
+            month_temp_history = prior_frame["temp_avg"].dropna()
+        cold_temp_threshold = (
+            float(month_temp_history.quantile(0.05))
+            if not month_temp_history.empty
+            else float(history["temp_avg"].min())
+        )
+        temp_trend_7 = float(frame.at[anchor_idx, "temp_avg"] - frame.at[anchor_idx - 7, "temp_avg"])
+        no_warmup_flag = float(
+            temp_trend_7 <= 0.0
+            and float(history["temp_avg"].tail(7).mean()) <= float(history["temp_avg"].tail(30).mean())
+        )
+        extreme_cold_flag = float(
+            float(frame.at[anchor_idx, "temp_avg"]) <= cold_temp_threshold and no_warmup_flag > 0.0
+        )
+        precip_3d = (
+            float(frame.at[anchor_idx, "precip_sum_3d"])
+            if "precip_sum_3d" in frame.columns
+            else float(history["precip"].tail(3).sum())
+        )
+        heavy_rain_flag = float(float(frame.at[anchor_idx, "precip"]) >= 30.0 or precip_3d >= 30.0)
+        recent_change_rate_7 = abs(
+            float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN] - frame.at[anchor_idx - 7, LOCAL_PRICE_COLUMN])
+        ) / max(abs(float(frame.at[anchor_idx - 7, LOCAL_PRICE_COLUMN])), 1e-6)
+        prior_change_rates_7 = (
+            prior_frame[LOCAL_PRICE_COLUMN]
+            .pct_change(periods=7)
+            .replace([np.inf, -np.inf], np.nan)
+            .abs()
+            .dropna()
+        )
+        momentum_threshold = (
+            float(prior_change_rates_7.quantile(0.9))
+            if not prior_change_rates_7.empty
+            else recent_change_rate_7
+        )
+        high_momentum_flag = float(recent_change_rate_7 >= momentum_threshold)
+        history_prices = history[LOCAL_PRICE_COLUMN].to_numpy(dtype=float)
+        current_price_percentile_90d = float(np.mean(history_prices <= anchor_price))
+        days_to_next_spring = float(frame.at[target_idx, "days_to_next_spring_festival"])
+        days_to_next_mid_autumn = float(frame.at[target_idx, "days_to_next_mid_autumn"])
+        days_to_next_qingming = float(frame.at[target_idx, "days_to_next_qingming"])
+        holiday_trigger_values = {
+            "spring_festival": days_to_next_spring,
+            "mid_autumn": days_to_next_mid_autumn,
+            "qingming": days_to_next_qingming,
+        }
+        holiday_window_flags = {
+            f"{holiday_name}_lead_{lead_days}d_flag": float(distance == float(lead_days))
+            for holiday_name, distance in holiday_trigger_values.items()
+            for lead_days in (7, 3, 1)
+        }
+        holiday_shock_flag = float(any(value > 0.0 for value in holiday_window_flags.values()))
+        shock_any_flag = float(
+            extreme_cold_flag > 0.0
+            or heavy_rain_flag > 0.0
+            or high_momentum_flag > 0.0
+            or holiday_shock_flag > 0.0
+        )
 
         row: dict[str, float | int | str] = {
             "anchor_date": anchor_date.strftime("%Y-%m-%d"),
@@ -255,12 +319,12 @@ def build_long_horizon_feature_table(
             TARGET_COLUMN: float(frame.at[target_idx, LOCAL_PRICE_COLUMN]),
             "horizon_days": int(horizon_days),
             "is_augmented": int(is_augmented),
-            "local_price": float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN]),
-            "naive_current_price": float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN]),
+            "local_price": anchor_price,
+            "naive_current_price": anchor_price,
             "naive_seasonal_price": seasonal_naive_price,
             "prior_year_same_day_price": seasonal_naive_price,
             "selected_baseline": (
-                seasonal_naive_price if horizon_days in {30, 90} else float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN])
+                seasonal_naive_price if horizon_days in {30, 90} else anchor_price
             ),
             "selected_baseline_name": (
                 "seasonal_last_year" if horizon_days in {30, 90} else "current_price"
@@ -287,24 +351,30 @@ def build_long_horizon_feature_table(
             "recent_price_range_7": recent_range_7,
             "rapid_rise_flag_7": float(recent_trend_7 > recent_vol_anchor),
             "rapid_drop_flag_7": float(recent_trend_7 < -recent_vol_anchor),
+            "current_price_percentile_90d": current_price_percentile_90d,
+            "recent_change_rate_7": recent_change_rate_7,
             "week_sin": float(np.sin(2.0 * np.pi * target_week / 52.0)),
             "week_cos": float(np.cos(2.0 * np.pi * target_week / 52.0)),
             "month_sin": float(np.sin(2.0 * np.pi * target_month / 12.0)),
             "month_cos": float(np.cos(2.0 * np.pi * target_month / 12.0)),
             "quarter": quarter,
-            "days_to_next_spring_festival": float(
-                frame.at[target_idx, "days_to_next_spring_festival"]
-            ),
-            "days_to_next_mid_autumn": float(
-                frame.at[target_idx, "days_to_next_mid_autumn"]
-            ),
-            "days_to_next_qingming": float(frame.at[target_idx, "days_to_next_qingming"]),
+            "days_to_next_spring_festival": days_to_next_spring,
+            "days_to_next_mid_autumn": days_to_next_mid_autumn,
+            "days_to_next_qingming": days_to_next_qingming,
             "temp_mean_30": float(history["temp_avg"].tail(30).mean()),
             "temp_mean_60": float(history["temp_avg"].tail(60).mean()),
             "temp_mean_90": float(history["temp_avg"].tail(90).mean()),
             "precip_sum_30": float(history["precip"].tail(30).sum()),
             "precip_sum_60": float(history["precip"].tail(60).sum()),
             "precip_sum_90": float(history["precip"].tail(90).sum()),
+            "cold_temp_threshold": cold_temp_threshold,
+            "temp_trend_7": temp_trend_7,
+            "no_warmup_flag": no_warmup_flag,
+            "extreme_cold_flag": extreme_cold_flag,
+            "heavy_rain_flag": heavy_rain_flag,
+            "high_momentum_flag": high_momentum_flag,
+            "holiday_shock_flag": holiday_shock_flag,
+            "shock_any_flag": shock_any_flag,
             "temp_climatology_month_5y": _climatology_mean(
                 frame,
                 anchor_date=anchor_date,
@@ -318,6 +388,7 @@ def build_long_horizon_feature_table(
                 value_column="precip",
             ),
         }
+        row.update(holiday_window_flags)
 
         if "beijing_cucumber_price" in frame.columns:
             row["beijing_current_price"] = float(frame.at[anchor_idx, "beijing_cucumber_price"])

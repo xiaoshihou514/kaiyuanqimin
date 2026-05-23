@@ -167,12 +167,12 @@ Main long-horizon outputs:
 - `data/models/long/lgbm/**`
 - `data/models/long/ridge/**`
 
-The long-horizon pipeline now also runs a validation-first heavy performance pass over the `LONG_PERF_2.md` ideas:
+The long-horizon pipeline now also runs a validation-first long-tail pass over the `LONG_PERF_3.md` ideas:
 - 7天差分目标 / 时移修正候选
-- 30/90天 stacking / 动态混合候选
-- 自适应 conformal / split conformal / 90天 EVT 候选
-- 多分位数 P05/P25/P50/P75/P95 重训
-- 极端值感知的 weighted Huber / 低正则候选
+- 冲击特征：极端降温 / 强降水 / 节日前置 / 高动量标记
+- 30/90天目标变化率加权训练 + 多分位数 `P25/P50/P75` 动态混合
+- 可选的 gated residual corrector 候选（保留在候选榜单，由选择逻辑加护栏）
+- 选中方案上的风险区间与高风险 / 卖出 / 避险预警输出
 - 按 horizon 的最终选择
 
 `data/model_candidates_long.csv` records the candidate leaderboard per horizon, and `data/model_summary_long.json` / `data/model_comparison_long.csv` keep the final selected outputs.
@@ -183,13 +183,15 @@ Launch the Streamlit long-horizon app after generating those artifacts:
 uv run streamlit run app.py
 ```
 
-The Streamlit app is the primary visualization path for long-horizon analysis and now focuses on the refreshed `LONG_PERF_2` selected results:
+The Streamlit app is the primary visualization path for long-horizon analysis and now focuses on the refreshed `LONG_PERF_3` selected-plus-risk results:
 - **最终选中方案的实际值 vs 预测值**：深色模式下展示 `7d / 30d / 90d` 三个周期在完整评估集（验证集 + 测试集）上的最终预测曲线
+- **风险预警汇总**：展示高风险占比、卖出预警占比、避险预警占比与平均区间宽度比
 - **候选方案排行榜**：按 horizon 展示 `data/model_candidates_long.csv`
+- **风险事件明细**：逐 horizon 展示高风险 / 卖出 / 避险事件行
 - **最终方案 vs 基线**：展示 `data/model_comparison_long.csv` 中最终选中方案相对基线的 MAE 比值
 
 Current validated long-horizon outcome on the repo data:
 - `1d`: LightGBM is still effectively tied with / slightly worse than naive
 - `7d`: the final winner is `mean_blend`, but it still does not beat the current-price naive baseline
-- `30d`: the final winner is `dynamic_blend`, and it clearly beats the seasonal naive baseline (`MAE ratio ~ 0.323`)
-- `90d`: the final winner is also `dynamic_blend`, and it beats the seasonal naive baseline (`MAE ratio ~ 0.711`)
+- `30d`: the final winner remains `dynamic_blend`, and it beats the seasonal naive baseline (`MAE ratio ~ 0.325`) while also exporting risk flags on the selected forecast
+- `90d`: the final winner remains `dynamic_blend`, and it beats the seasonal naive baseline (`MAE ratio ~ 0.605`) with the new risk-interval outputs

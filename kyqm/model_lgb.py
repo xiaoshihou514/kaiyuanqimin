@@ -242,13 +242,13 @@ def train_lightgbm_models(
         pred_test_lower = lower_model.predict(x_test) + test_baseline
         pred_test_upper = upper_model.predict(x_test) + test_baseline
 
-    with (model_output_dir / "point_model.pkl").open("wb") as f:
+    with (model_output_dir / "point_model.pt").open("wb") as f:
         pickle.dump(point_model, f)
     if lower_model is not None:
-        with (model_output_dir / "quantile_p10.pkl").open("wb") as f:
+        with (model_output_dir / "quantile_p10.pt").open("wb") as f:
             pickle.dump(lower_model, f)
     if upper_model is not None:
-        with (model_output_dir / "quantile_p90.pkl").open("wb") as f:
+        with (model_output_dir / "quantile_p90.pt").open("wb") as f:
             pickle.dump(upper_model, f)
 
     _write_feature_importance(point_model, feature_columns, model_output_dir)

@@ -521,7 +521,7 @@ def _choose_best_candidate(
     order_map = {name: idx for idx, name in enumerate(preferred_order)}
 
     def _score(row: dict[str, float | int | str]) -> tuple[float, float, int]:
-        base_score = float(row["val_mae"])
+        base_score = float(row["val_mae"]) + float(row.get("selection_penalty", 0.0))
         if "val_picp" in row:
             picp_penalty = abs(float(row["val_picp"]) - 0.85)
             width_penalty = float(row.get("val_interval_width", 0.0)) * 0.02
@@ -551,6 +551,18 @@ def _volatility_sample_weight(frame: pd.DataFrame) -> np.ndarray:
     filled = np.nan_to_num(raw, nan=mean_value)
     normalized = filled / mean_value
     return np.clip(normalized, 0.5, 3.0)
+
+
+def _tail_change_sample_weight(
+    frame: pd.DataFrame,
+    *,
+    threshold: float = 0.1,
+    extra_weight: float = 3.0,
+) -> np.ndarray:
+    anchor_price = frame["local_price"].to_numpy(dtype=float)
+    target_price = frame["target"].to_numpy(dtype=float)
+    change_rate = np.abs(target_price - anchor_price) / np.maximum(np.abs(anchor_price), 1e-6)
+    return 1.0 + extra_weight * (change_rate > threshold).astype(float)
 
 
 def _train_multi_quantile_candidate(
@@ -854,7 +866,7 @@ def _dynamic_blend_frame(
     left_frame["date"] = pd.to_datetime(left_frame["date"])
     right_frame["date"] = pd.to_datetime(right_frame["date"])
     eval_meta["date"] = pd.to_datetime(eval_meta["date"])
-    thresholds = _bucket_thresholds(train_volatility)
+    thresholds = tuple(train_volatility.quantile([0.5, 0.75]).to_numpy(dtype=float))
     val_meta = eval_meta[eval_meta["split"] == "val"].copy()
     val_merged = (
         left_frame[left_frame["split"] == "val"]
@@ -866,12 +878,28 @@ def _dynamic_blend_frame(
         .merge(val_meta, on=["date", "split"], how="left")
     )
     val_merged["bucket"] = _assign_bucket(val_merged["roll_std_30"], thresholds)
+
+    def _effective_left_prediction(merged_frame: pd.DataFrame) -> pd.Series:
+        if {"y_pred_p25_left", "y_pred_p50_left", "y_pred_p75_left"}.issubset(merged_frame.columns):
+            effective = merged_frame["y_pred_p50_left"].astype(float).copy()
+            high_bucket = merged_frame["bucket"] == 2
+            uptrend = merged_frame["price_change_30"].fillna(0.0) >= 0.0
+            effective.loc[high_bucket & uptrend] = merged_frame.loc[
+                high_bucket & uptrend, "y_pred_p75_left"
+            ]
+            effective.loc[high_bucket & ~uptrend] = merged_frame.loc[
+                high_bucket & ~uptrend, "y_pred_p25_left"
+            ]
+            return effective
+        return merged_frame["y_pred_left"].astype(float)
+
+    val_merged["left_effective_pred"] = _effective_left_prediction(val_merged)
     weights: dict[int, float] = {}
     grid = np.linspace(0.0, 1.0, 11)
     global_best = 0.5
     global_mae = float("inf")
     for weight in grid:
-        pred = weight * val_merged["y_pred_left"] + (1.0 - weight) * val_merged["y_pred_right"]
+        pred = weight * val_merged["left_effective_pred"] + (1.0 - weight) * val_merged["y_pred_right"]
         current = mae(val_merged["y_true_left"].to_numpy(dtype=float), pred.to_numpy(dtype=float))
         if current < global_mae:
             global_mae = current
@@ -884,7 +912,7 @@ def _dynamic_blend_frame(
         best_weight = global_best
         best_mae = float("inf")
         for weight in grid:
-            pred = weight * bucket_rows["y_pred_left"] + (1.0 - weight) * bucket_rows["y_pred_right"]
+            pred = weight * bucket_rows["left_effective_pred"] + (1.0 - weight) * bucket_rows["y_pred_right"]
             current = mae(bucket_rows["y_true_left"].to_numpy(dtype=float), pred.to_numpy(dtype=float))
             if current < best_mae:
                 best_mae = current
@@ -897,25 +925,147 @@ def _dynamic_blend_frame(
         suffixes=("_left", "_right"),
     ).merge(eval_meta, on=["date", "split"], how="left")
     merged["bucket"] = _assign_bucket(merged["roll_std_30"], thresholds)
+    merged["left_effective_pred"] = _effective_left_prediction(merged)
     dynamic_weights = merged["bucket"].map(weights).astype(float)
     blended = pd.DataFrame(
         {
             "date": merged["date"],
             "split": merged["split"],
             "y_true": merged["y_true_left"],
-            "y_pred": dynamic_weights.to_numpy(dtype=float) * merged["y_pred_left"]
+            "y_pred": dynamic_weights.to_numpy(dtype=float) * merged["left_effective_pred"]
             + (1.0 - dynamic_weights.to_numpy(dtype=float)) * merged["y_pred_right"],
         }
     )
-    if {"y_pred_p10_left", "y_pred_p90_left", "y_pred_p10_right", "y_pred_p90_right"}.issubset(merged.columns):
-        blended["y_pred_p10"] = dynamic_weights.to_numpy(dtype=float) * merged["y_pred_p10_left"] + (
+    lower_left_column = None
+    upper_left_column = None
+    if "y_pred_p05_left" in merged.columns and "y_pred_p95_left" in merged.columns:
+        lower_left_column = "y_pred_p05_left"
+        upper_left_column = "y_pred_p95_left"
+    elif "y_pred_p25_left" in merged.columns and "y_pred_p75_left" in merged.columns:
+        lower_left_column = "y_pred_p25_left"
+        upper_left_column = "y_pred_p75_left"
+    if lower_left_column is not None and upper_left_column is not None:
+        blended["y_pred_p10"] = dynamic_weights.to_numpy(dtype=float) * merged[lower_left_column] + (
             1.0 - dynamic_weights.to_numpy(dtype=float)
-        ) * merged["y_pred_p10_right"]
-        blended["y_pred_p90"] = dynamic_weights.to_numpy(dtype=float) * merged["y_pred_p90_left"] + (
+        ) * merged["y_pred_right"]
+        blended["y_pred_p90"] = dynamic_weights.to_numpy(dtype=float) * merged[upper_left_column] + (
             1.0 - dynamic_weights.to_numpy(dtype=float)
-        ) * merged["y_pred_p90_right"]
+        ) * merged["y_pred_right"]
     blended["date"] = pd.to_datetime(blended["date"]).dt.strftime("%Y-%m-%d")
     return blended, weights
+
+
+def _residual_corrected_frame(
+    *,
+    base_frame: pd.DataFrame,
+    eval_meta: pd.DataFrame,
+    threshold_grid: tuple[float, ...] = (0.3, 0.5, 0.7, 0.9),
+) -> tuple[pd.DataFrame, float, float]:
+    base_frame = base_frame.copy()
+    eval_meta = eval_meta.copy()
+    base_frame["date"] = pd.to_datetime(base_frame["date"])
+    eval_meta["date"] = pd.to_datetime(eval_meta["date"])
+    merged = (
+        base_frame.merge(eval_meta, on=["date", "split"], how="left")
+        .sort_values(["split", "date"])
+        .reset_index(drop=True)
+    )
+    val_rows = merged[merged["split"] == "val"].copy()
+    test_rows = merged[merged["split"] == "test"].copy()
+    feature_columns = ["roll_std_30", "shock_any_flag", "current_price_percentile_90d"]
+    x_val = val_rows[feature_columns].fillna(0.0).to_numpy(dtype=float)
+    y_val = (val_rows["y_true"] - val_rows["y_pred"]).to_numpy(dtype=float)
+    corrector = Ridge(alpha=1.0)
+    corrector.fit(x_val, y_val)
+    val_pred_residual = corrector.predict(x_val)
+    high_vol_cut = float(val_rows["roll_std_30"].quantile(0.75))
+    val_activation = (
+        (val_rows["shock_any_flag"].fillna(0.0).to_numpy(dtype=float) > 0.0)
+        | (val_rows["roll_std_30"].fillna(0.0).to_numpy(dtype=float) >= high_vol_cut)
+    )
+    best_threshold = float(threshold_grid[0])
+    best_mae = float("inf")
+    for threshold in threshold_grid:
+        gated_residual = np.where(
+            (np.abs(val_pred_residual) >= threshold) & val_activation,
+            val_pred_residual,
+            0.0,
+        )
+        current_mae = mae(
+            val_rows["y_true"].to_numpy(dtype=float),
+            val_rows["y_pred"].to_numpy(dtype=float) + gated_residual,
+        )
+        if current_mae < best_mae:
+            best_mae = current_mae
+            best_threshold = float(threshold)
+
+    def _apply(rows: pd.DataFrame) -> pd.DataFrame:
+        x = rows[feature_columns].fillna(0.0).to_numpy(dtype=float)
+        residual_pred = corrector.predict(x)
+        activation = (
+            (rows["shock_any_flag"].fillna(0.0).to_numpy(dtype=float) > 0.0)
+            | (rows["roll_std_30"].fillna(0.0).to_numpy(dtype=float) >= high_vol_cut)
+        )
+        gated_residual = np.where(
+            (np.abs(residual_pred) >= best_threshold) & activation,
+            residual_pred,
+            0.0,
+        )
+        corrected = base_frame[base_frame["split"] == rows["split"].iloc[0]].copy()
+        corrected["y_pred"] = corrected["y_pred"].to_numpy(dtype=float) + gated_residual
+        corrected["predicted_residual"] = residual_pred
+        corrected["residual_gate_threshold"] = best_threshold
+        corrected["residual_correction_applied"] = (
+            (np.abs(residual_pred) >= best_threshold) & activation
+        ).astype(int)
+        corrected["date"] = pd.to_datetime(corrected["date"]).dt.strftime("%Y-%m-%d")
+        return corrected
+
+    corrected_frame = pd.concat([_apply(val_rows), _apply(test_rows)], ignore_index=True)
+    correction_rate = float(corrected_frame.loc[corrected_frame["split"] == "val", "residual_correction_applied"].mean())
+    return corrected_frame, best_threshold, correction_rate
+
+
+def _attach_risk_flags(
+    *,
+    selected_frame: pd.DataFrame,
+    eval_meta: pd.DataFrame,
+    risk_ratio_threshold: float = 0.5,
+    sell_ratio: float = 1.1,
+    hedge_ratio: float = 0.9,
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    selected_frame = selected_frame.copy()
+    eval_meta = eval_meta.copy()
+    selected_frame["date"] = pd.to_datetime(selected_frame["date"])
+    eval_meta["date"] = pd.to_datetime(eval_meta["date"])
+    merged = (
+        selected_frame.merge(eval_meta, on=["date", "split"], how="left")
+        .sort_values(["split", "date"])
+        .reset_index(drop=True)
+    )
+    risk_frame = selected_frame.copy().reset_index(drop=True)
+    if not {"y_pred_p10", "y_pred_p90"}.issubset(risk_frame.columns):
+        val_residual = (
+            merged.loc[merged["split"] == "val", "y_true"] - merged.loc[merged["split"] == "val", "y_pred"]
+        ).to_numpy(dtype=float)
+        lower_offset = float(np.quantile(val_residual, 0.1))
+        upper_offset = float(np.quantile(val_residual, 0.9))
+        risk_frame["y_pred_p10"] = risk_frame["y_pred"].to_numpy(dtype=float) + lower_offset
+        risk_frame["y_pred_p90"] = risk_frame["y_pred"].to_numpy(dtype=float) + upper_offset
+    interval_width = risk_frame["y_pred_p90"] - risk_frame["y_pred_p10"]
+    denominator = np.maximum(np.abs(risk_frame["y_pred"].to_numpy(dtype=float)), 1e-6)
+    local_price = merged["local_price"].fillna(risk_frame["y_pred"]).to_numpy(dtype=float)
+    risk_frame["interval_width_ratio"] = interval_width.to_numpy(dtype=float) / denominator
+    risk_frame["high_risk_flag"] = (risk_frame["interval_width_ratio"] > risk_ratio_threshold).astype(int)
+    risk_frame["sell_alert_flag"] = (risk_frame["y_pred_p90"].to_numpy(dtype=float) > local_price * sell_ratio).astype(int)
+    risk_frame["hedge_alert_flag"] = (risk_frame["y_pred_p10"].to_numpy(dtype=float) < local_price * hedge_ratio).astype(int)
+    risk_summary = {
+        "test_high_risk_rate": float(risk_frame.loc[risk_frame["split"] == "test", "high_risk_flag"].mean()),
+        "test_sell_alert_rate": float(risk_frame.loc[risk_frame["split"] == "test", "sell_alert_flag"].mean()),
+        "test_hedge_alert_rate": float(risk_frame.loc[risk_frame["split"] == "test", "hedge_alert_flag"].mean()),
+    }
+    risk_frame["date"] = pd.to_datetime(risk_frame["date"]).dt.strftime("%Y-%m-%d")
+    return risk_frame, risk_summary
 
 
 def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | int | str]]:
@@ -986,16 +1136,37 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
         features = long_feature_columns(horizon_df)
         eval_meta = pd.concat(
             [
-                splits.val[["target_date", "roll_std_30", "recent_return_std_7", "price_change_30"]]
+                splits.val[
+                    [
+                        "target_date",
+                        "roll_std_30",
+                        "recent_return_std_7",
+                        "price_change_30",
+                        "shock_any_flag",
+                        "current_price_percentile_90d",
+                        "local_price",
+                    ]
+                ]
                 .rename(columns={"target_date": "date"})
                 .assign(split="val"),
-                splits.test[["target_date", "roll_std_30", "recent_return_std_7", "price_change_30"]]
+                splits.test[
+                    [
+                        "target_date",
+                        "roll_std_30",
+                        "recent_return_std_7",
+                        "price_change_30",
+                        "shock_any_flag",
+                        "current_price_percentile_90d",
+                        "local_price",
+                    ]
+                ]
                 .rename(columns={"target_date": "date"})
                 .assign(split="test"),
             ],
             ignore_index=True,
         )
-        train_sample_weight = _volatility_sample_weight(splits.train)
+        volatility_sample_weight = _volatility_sample_weight(splits.train)
+        tail_sample_weight = _tail_change_sample_weight(splits.train)
         baseline_true = splits.test["target"].to_numpy(dtype=float)
         baseline_pred = splits.test["selected_baseline"].to_numpy(dtype=float)
         baseline_name = str(splits.test["selected_baseline_name"].mode().iloc[0])
@@ -1178,7 +1349,7 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                 early_stopping_rounds=cfg.lgbm.early_stopping_rounds,
                 cv_splits=cfg.lgbm.cv_splits,
                 point_objective="huber",
-                sample_weight=train_sample_weight,
+                sample_weight=tail_sample_weight if horizon_days in {30, 90} else volatility_sample_weight,
             )
             horizon_oof_meta["lightgbm_weighted_huber"] = lgbm_oof_and_eval_predictions(
                 train_df=splits.train,
@@ -1195,7 +1366,7 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                 cv_splits=cfg.lgbm.cv_splits,
                 baseline_column=None,
                 point_objective="huber",
-                sample_weight=train_sample_weight,
+                sample_weight=tail_sample_weight if horizon_days in {30, 90} else volatility_sample_weight,
             )
             weighted_huber_frame = _load_prediction_frame(weighted_huber_result.prediction_path)
             horizon_prediction_frames["lightgbm_weighted_huber"] = weighted_huber_frame
@@ -1204,13 +1375,14 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                 "baseline_column": None,
                 "params": weighted_huber_params,
                 "point_objective": "huber",
-                "sample_weight": train_sample_weight,
+                "sample_weight": tail_sample_weight if horizon_days in {30, 90} else volatility_sample_weight,
             }
             candidate_rows.append(
                 {
                     "horizon_days": horizon_days,
                     "candidate": "lightgbm_weighted_huber",
                     "baseline_name": baseline_name,
+                    "weight_scheme": "tail_change" if horizon_days in {30, 90} else "volatility",
                     **_candidate_metrics(weighted_huber_frame),
                 }
             )
@@ -1223,7 +1395,7 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                 feature_columns=features,
                 prediction_path=multiq_path,
                 params=weighted_huber_params,
-                sample_weight=train_sample_weight,
+                sample_weight=tail_sample_weight if horizon_days in {30, 90} else volatility_sample_weight,
                 baseline_column=None,
             )
             horizon_oof_meta["multi_quantile_p50"] = lgbm_oof_and_eval_predictions(
@@ -1242,7 +1414,7 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                 baseline_column=None,
                 point_objective="quantile",
                 point_alpha=0.5,
-                sample_weight=train_sample_weight,
+                sample_weight=tail_sample_weight if horizon_days in {30, 90} else volatility_sample_weight,
             )
             horizon_prediction_frames["multi_quantile_p50"] = multiq_frame
             horizon_lgb_meta["multi_quantile_p50"] = {
@@ -1251,13 +1423,14 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                 "params": weighted_huber_params,
                 "point_objective": "quantile",
                 "point_alpha": 0.5,
-                "sample_weight": train_sample_weight,
+                "sample_weight": tail_sample_weight if horizon_days in {30, 90} else volatility_sample_weight,
             }
             candidate_rows.append(
                 {
                     "horizon_days": horizon_days,
                     "candidate": "multi_quantile_p50",
                     "baseline_name": baseline_name,
+                    "weight_scheme": "tail_change" if horizon_days in {30, 90} else "volatility",
                     **_candidate_metrics(multiq_frame),
                 }
             )
@@ -1525,8 +1698,9 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                 }
             ]
             if lgb_like_candidates:
-                best_lgb_like = min(lgb_like_candidates, key=lambda row: float(row["val_mae"]))
-                lgb_name = str(best_lgb_like["candidate"])
+                lgb_name = "multi_quantile_p50" if "multi_quantile_p50" in horizon_prediction_frames else str(
+                    min(lgb_like_candidates, key=lambda row: float(row["val_mae"]))["candidate"]
+                )
                 dynamic_frame, bucket_weights = _dynamic_blend_frame(
                     left_frame=horizon_prediction_frames[lgb_name],
                     right_frame=horizon_prediction_frames["ridge"],
@@ -1548,11 +1722,31 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
                         **_candidate_metrics(dynamic_frame),
                     }
                 )
+                residual_corrected_frame, residual_threshold, residual_correction_rate = _residual_corrected_frame(
+                    base_frame=dynamic_frame,
+                    eval_meta=eval_meta,
+                )
+                residual_path = prediction_dir / f"h{horizon_days}" / f"dynamic_blend_residual_{horizon_days}d_predictions.csv"
+                _write_prediction_frame(residual_corrected_frame, residual_path)
+                horizon_prediction_frames["dynamic_blend_residual_corrected"] = residual_corrected_frame
+                candidate_rows.append(
+                    {
+                        "horizon_days": horizon_days,
+                        "candidate": "dynamic_blend_residual_corrected",
+                        "baseline_name": baseline_name,
+                        "blend_source": lgb_name,
+                        "residual_threshold": residual_threshold,
+                        "residual_correction_rate": residual_correction_rate,
+                        "selection_penalty": 0.2 if residual_correction_rate > 0.15 else 0.0,
+                        **_candidate_metrics(residual_corrected_frame),
+                    }
+                )
 
         horizon_candidates = [
             row for row in candidate_rows if int(row["horizon_days"]) == horizon_days
         ]
         preferred_order = [
+            "dynamic_blend_residual_corrected",
             "stacking_ridge_meta",
             "dynamic_blend",
             "multi_quantile_p50",
@@ -1678,6 +1872,13 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
             selected_candidate = best_interval_candidate
             selected_frame = interval_frames[selected_name]
 
+        risk_summary: dict[str, float] = {}
+        if selected_frame is not None and horizon_days in {30, 90}:
+            selected_frame, risk_summary = _attach_risk_flags(
+                selected_frame=selected_frame,
+                eval_meta=eval_meta,
+            )
+
         for row in candidate_rows:
             if int(row["horizon_days"]) == horizon_days:
                 row["selected"] = int(str(row["candidate"]) == selected_name)
@@ -1707,6 +1908,7 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
             summary[f"selected_{horizon_days}d"]["test_interval_width"] = float(
                 selected_candidate["test_interval_width"]
             )
+        summary[f"selected_{horizon_days}d"].update(risk_summary)
         comparison_rows.append(
             {
                 "horizon_days": horizon_days,
