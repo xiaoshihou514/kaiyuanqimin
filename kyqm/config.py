@@ -12,6 +12,17 @@ def _optional_text(value: object) -> str | None:
     return text or None
 
 
+def _string_list(value: object, default: list[str]) -> list[str]:
+    if value is None:
+        return list(default)
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
 @dataclass(frozen=True)
 class DataConfig:
     market_prices_path: Path
@@ -21,6 +32,8 @@ class DataConfig:
     province_name: str
     city_name: str | None
     product_name: str
+    companion_products: list[str]
+    nearby_cucumber_provinces: list[str]
     forecast_horizon: int
     start_date: str
     end_date: str
@@ -45,6 +58,8 @@ class LgbmConfig:
     quantiles_enabled: bool
     lower_alpha: float
     upper_alpha: float
+    cv_splits: int
+    use_prophet_components: bool
     model_output_dir: Path
 
 
@@ -138,6 +153,14 @@ def load_config(config_path: Path) -> KyqmConfig:
             province_name=str(data.get("province_name", "山东省")),
             city_name=_optional_text(data.get("city_name")),
             product_name=str(data.get("product_name", "黄瓜")),
+            companion_products=_string_list(
+                data.get("companion_products"),
+                ["西红柿", "茄子", "大白菜", "青椒"],
+            ),
+            nearby_cucumber_provinces=_string_list(
+                data.get("nearby_cucumber_provinces"),
+                ["河北省", "河南省"],
+            ),
             forecast_horizon=int(data.get("forecast_horizon", 1)),
             start_date=str(data.get("start_date", "2020-01-01")),
             end_date=str(data.get("end_date", "2026-05-21")),
@@ -149,17 +172,19 @@ def load_config(config_path: Path) -> KyqmConfig:
         ),
         lgbm=LgbmConfig(
             enabled=bool(lgbm.get("enabled", True)),
-            learning_rate=float(lgbm.get("learning_rate", 0.03)),
-            n_estimators=int(lgbm.get("n_estimators", 300)),
-            max_depth=int(lgbm.get("max_depth", 4)),
-            num_leaves=int(lgbm.get("num_leaves", 15)),
-            min_data_in_leaf=int(lgbm.get("min_data_in_leaf", 20)),
-            lambda_l1=float(lgbm.get("lambda_l1", 0.1)),
-            lambda_l2=float(lgbm.get("lambda_l2", 0.5)),
+            learning_rate=float(lgbm.get("learning_rate", 0.01)),
+            n_estimators=int(lgbm.get("n_estimators", 200)),
+            max_depth=int(lgbm.get("max_depth", 3)),
+            num_leaves=int(lgbm.get("num_leaves", 7)),
+            min_data_in_leaf=int(lgbm.get("min_data_in_leaf", 40)),
+            lambda_l1=float(lgbm.get("lambda_l1", 0.2)),
+            lambda_l2=float(lgbm.get("lambda_l2", 1.0)),
             early_stopping_rounds=int(lgbm.get("early_stopping_rounds", 50)),
             quantiles_enabled=bool(lgbm.get("quantiles_enabled", True)),
             lower_alpha=float(lgbm.get("lower_alpha", 0.1)),
             upper_alpha=float(lgbm.get("upper_alpha", 0.9)),
+            cv_splits=int(lgbm.get("cv_splits", 5)),
+            use_prophet_components=bool(lgbm.get("use_prophet_components", False)),
             model_output_dir=Path(
                 str(lgbm.get("model_output_dir", "data/models/lgbm"))
             ),

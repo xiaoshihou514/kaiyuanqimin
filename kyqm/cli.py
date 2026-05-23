@@ -5,12 +5,18 @@ import json
 from pathlib import Path
 
 from .config import KyqmConfig, load_config
-from .feature_engineering import build_feature_table, feature_columns, split_by_time
+from .feature_engineering import (
+    CORE_RECURRENT_COLUMNS,
+    build_feature_table,
+    feature_columns,
+    lgbm_feature_columns,
+    split_by_time,
+)
 from .metrics import baseline_metrics, prediction_preview
 from .model_gru import train_gru_model
 from .model_lgb import train_lightgbm_models
 from .model_lstm import train_lstm_model
-from .model_prophet import train_prophet_model
+from .model_prophet import add_prophet_seasonal_features, train_prophet_model
 from .prepare import PrepareParams, prepare_training_frame
 
 
@@ -133,6 +139,8 @@ def run(
             province_name=cfg.data.province_name,
             city_name=cfg.data.city_name,
             product_name=cfg.data.product_name,
+            companion_products=cfg.data.companion_products,
+            nearby_cucumber_provinces=cfg.data.nearby_cucumber_provinces,
             start_date=cfg.data.start_date,
             end_date=cfg.data.end_date,
             max_forward_fill_days=cfg.data.max_forward_fill_days,
@@ -142,6 +150,13 @@ def run(
     feature_df = build_feature_table(
         cleaned, forecast_horizon=cfg.data.forecast_horizon
     )
+    if cfg.lgbm.use_prophet_components:
+        feature_df = add_prophet_seasonal_features(
+            feature_df,
+            train_end=cfg.data.train_end,
+            weekly_seasonality=cfg.prophet.weekly_seasonality,
+            yearly_seasonality=cfg.prophet.yearly_seasonality,
+        )
     cfg.data.feature_output_path.parent.mkdir(parents=True, exist_ok=True)
     feature_df.to_csv(cfg.data.feature_output_path, index=False)
 
@@ -152,6 +167,10 @@ def run(
         test_end=cfg.data.test_end,
     )
     feature_cols = feature_columns(feature_df)
+    lightgbm_feature_cols = lgbm_feature_columns(feature_df)
+    recurrent_feature_cols = [
+        column for column in CORE_RECURRENT_COLUMNS if column in feature_df.columns
+    ]
 
     summary: dict[str, dict[str, float | int | str]] = {}
     run_model = cfg.run.model
@@ -175,7 +194,7 @@ def run(
             train_df=splits.train,
             val_df=splits.val,
             test_df=splits.test,
-            feature_columns=feature_cols,
+            feature_columns=lightgbm_feature_cols,
             model_output_dir=cfg.lgbm.model_output_dir,
             prediction_output_dir=prediction_dir,
             quantiles_enabled=cfg.lgbm.quantiles_enabled,
@@ -189,13 +208,14 @@ def run(
             lambda_l1=cfg.lgbm.lambda_l1,
             lambda_l2=cfg.lgbm.lambda_l2,
             early_stopping_rounds=cfg.lgbm.early_stopping_rounds,
+            cv_splits=cfg.lgbm.cv_splits,
         )
         summary["lightgbm"] = lgbm_result.metrics
 
     if run_model in {"all", "gru"} and cfg.gru.enabled:
         gru_result = train_gru_model(
             frame=feature_df,
-            feature_columns=feature_cols,
+            feature_columns=recurrent_feature_cols,
             sequence_length=cfg.gru.sequence_length,
             hidden_dim=cfg.gru.hidden_dim,
             num_layers=cfg.gru.num_layers,
@@ -221,7 +241,7 @@ def run(
     if run_model in {"all", "lstm"} and cfg.lstm.enabled:
         lstm_result = train_lstm_model(
             frame=feature_df,
-            feature_columns=feature_cols,
+            feature_columns=recurrent_feature_cols,
             sequence_length=cfg.lstm.sequence_length,
             hidden_dim=cfg.lstm.hidden_dim,
             num_layers=cfg.lstm.num_layers,

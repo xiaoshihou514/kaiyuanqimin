@@ -8,7 +8,8 @@ import pandas as pd
 
 TARGET_COLUMN = "target"
 TARGET_DATE_COLUMN = "target_date"
-BASE_COLUMNS = ["local_price", "temp_avg", "precip", "sentiment_score"]
+LOCAL_PRICE_COLUMN = "local_price"
+CORE_RECURRENT_COLUMNS = ["local_price", "temp_avg", "precip"]
 
 
 @dataclass(frozen=True)
@@ -26,33 +27,42 @@ def build_feature_table(cleaned: pd.DataFrame, *, forecast_horizon: int = 1) -> 
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame = frame.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
 
-    frame[TARGET_COLUMN] = frame["local_price"].shift(-forecast_horizon).astype(float)
+    frame[TARGET_COLUMN] = frame[LOCAL_PRICE_COLUMN].shift(-forecast_horizon).astype(float)
     frame[TARGET_DATE_COLUMN] = frame["date"].shift(-forecast_horizon)
 
     for lag in (1, 2, 3, 7, 14, 30):
-        frame[f"lag_{lag}"] = frame["local_price"].shift(lag)
+        frame[f"lag_{lag}"] = frame[LOCAL_PRICE_COLUMN].shift(lag)
 
     for window in (7, 14):
-        rolling = frame["local_price"].rolling(window=window)
+        rolling = frame[LOCAL_PRICE_COLUMN].rolling(window=window, min_periods=window)
         frame[f"roll_mean_{window}"] = rolling.mean()
         frame[f"roll_std_{window}"] = rolling.std(ddof=0)
         frame[f"roll_max_{window}"] = rolling.max()
         frame[f"roll_min_{window}"] = rolling.min()
 
-    frame["price_diff_1"] = frame["local_price"] - frame["lag_1"]
-    frame["price_diff_7"] = frame["local_price"] - frame["lag_7"]
+    frame["price_diff_1"] = frame[LOCAL_PRICE_COLUMN] - frame["lag_1"]
+    frame["price_diff_7"] = frame[LOCAL_PRICE_COLUMN] - frame["lag_7"]
 
-    for lag in (1, 3, 7):
-        frame[f"temp_lag_{lag}"] = frame["temp_avg"].shift(lag)
-        frame[f"precip_lag_{lag}"] = frame["precip"].shift(lag)
-    frame["precip_sum_3"] = frame["precip"].rolling(window=3).sum()
-    frame["precip_sum_7"] = frame["precip"].rolling(window=7).sum()
-    frame["temp_mean_7"] = frame["temp_avg"].rolling(window=7).mean()
+    for column in frame.columns:
+        if column.endswith("_price") and column != LOCAL_PRICE_COLUMN:
+            frame[f"{column}_lag1"] = frame[column].shift(1)
+            frame[f"{column}_lag7"] = frame[column].shift(7)
 
-    frame["weekday"] = frame["date"].dt.weekday
-    frame["month"] = frame["date"].dt.month
+    for column in frame.columns:
+        if column.endswith("_cucumber_price"):
+            frame[f"{column}_lag1"] = frame[column].shift(1)
+            if f"{column}_lag7" in frame.columns:
+                frame = frame.drop(columns=[f"{column}_lag7"])
+
+    frame["temp_lag_1"] = frame["temp_avg"].shift(1)
+    frame["temp_lag_3"] = frame["temp_avg"].shift(3)
+    frame["precip_lag_1"] = frame["precip"].shift(1)
+    frame["precip_lag_3"] = frame["precip"].shift(3)
+
+    frame["weekday"] = frame[TARGET_DATE_COLUMN].dt.weekday
+    frame["month"] = frame[TARGET_DATE_COLUMN].dt.month
     frame["is_weekend"] = (frame["weekday"] >= 5).astype(int)
-    day_of_year = frame["date"].dt.dayofyear.astype(float)
+    day_of_year = frame[TARGET_DATE_COLUMN].dt.dayofyear.astype(float)
     frame["doy_sin"] = np.sin(2.0 * np.pi * day_of_year / 365.0)
     frame["doy_cos"] = np.cos(2.0 * np.pi * day_of_year / 365.0)
 
@@ -82,8 +92,24 @@ def split_by_time(
 
 
 def feature_columns(frame: pd.DataFrame) -> list[str]:
+    excluded_raw_cross_series = {
+        col
+        for col in frame.columns
+        if col.endswith("_price") and col != LOCAL_PRICE_COLUMN
+    }
     return [
         col
         for col in frame.columns
-        if col not in {"date", TARGET_COLUMN, TARGET_DATE_COLUMN}
+        if col
+        not in {"date", TARGET_COLUMN, TARGET_DATE_COLUMN, *excluded_raw_cross_series}
+    ]
+
+
+def lgbm_feature_columns(frame: pd.DataFrame) -> list[str]:
+    return [
+        col
+        for col in feature_columns(frame)
+        if col.startswith("lag_")
+        or col.startswith("roll_")
+        or col.startswith("price_diff_")
     ]
