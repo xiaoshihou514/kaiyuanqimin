@@ -6,8 +6,10 @@ from pathlib import Path
 
 from .config import KyqmConfig, load_config
 from .feature_engineering import build_feature_table, feature_columns, split_by_time
+from .metrics import baseline_metrics, prediction_preview
 from .model_gru import train_gru_model
 from .model_lgb import train_lightgbm_models
+from .model_lstm import train_lstm_model
 from .model_prophet import train_prophet_model
 from .prepare import PrepareParams, prepare_training_frame
 
@@ -25,19 +27,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        choices=["all", "lgbm", "gru", "prophet"],
+        choices=["all", "lgbm", "gru", "lstm", "prophet"],
         default=None,
         help="Run specific model path.",
     )
-    parser.add_argument("--epochs", type=int, default=None, help="Override GRU epochs.")
     parser.add_argument(
-        "--batch-size", type=int, default=None, help="Override GRU batch size."
+        "--epochs", type=int, default=None, help="Override recurrent-model epochs."
     )
     parser.add_argument(
-        "--learning-rate", type=float, default=None, help="Override GRU learning rate."
+        "--batch-size", type=int, default=None, help="Override recurrent-model batch size."
     )
     parser.add_argument(
-        "--device", type=str, default=None, help="Override GRU device (cpu/cuda/auto)."
+        "--learning-rate",
+        type=float,
+        default=None,
+        help="Override recurrent-model learning rate.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Override recurrent-model device (cpu/cuda/auto).",
     )
     return parser.parse_args()
 
@@ -55,6 +65,22 @@ def _apply_overrides(
         data=cfg.data,
         lgbm=cfg.lgbm,
         prophet=cfg.prophet,
+        lstm=cfg.lstm.__class__(
+            enabled=cfg.lstm.enabled,
+            sequence_length=cfg.lstm.sequence_length,
+            hidden_dim=cfg.lstm.hidden_dim,
+            num_layers=cfg.lstm.num_layers,
+            dropout=cfg.lstm.dropout,
+            batch_size=batch_size or cfg.lstm.batch_size,
+            epochs=epochs or cfg.lstm.epochs,
+            learning_rate=learning_rate or cfg.lstm.learning_rate,
+            patience=cfg.lstm.patience,
+            weight_decay=cfg.lstm.weight_decay,
+            grad_clip_norm=cfg.lstm.grad_clip_norm,
+            model_output_path=cfg.lstm.model_output_path,
+            metrics_output_path=cfg.lstm.metrics_output_path,
+            device=device or cfg.lstm.device,
+        ),
         run=cfg.run.__class__(
             model=model or cfg.run.model,
             seed=cfg.run.seed,
@@ -113,7 +139,9 @@ def run(
             outlier_sigma=cfg.data.outlier_sigma,
         )
     )
-    feature_df = build_feature_table(cleaned)
+    feature_df = build_feature_table(
+        cleaned, forecast_horizon=cfg.data.forecast_horizon
+    )
     cfg.data.feature_output_path.parent.mkdir(parents=True, exist_ok=True)
     feature_df.to_csv(cfg.data.feature_output_path, index=False)
 
@@ -129,6 +157,18 @@ def run(
     run_model = cfg.run.model
     prediction_dir = cfg.run.prediction_output_dir
     prediction_dir.mkdir(parents=True, exist_ok=True)
+
+    baseline_true = splits.test["target"].to_numpy(dtype=float)
+    baseline_pred = splits.test["local_price"].to_numpy(dtype=float)
+    summary["naive_last_price"] = {
+        "model": "naive_last_price",
+        **baseline_metrics(baseline_true, baseline_pred),
+        "prediction_preview": prediction_preview(
+            splits.test["target_date"].dt.strftime("%Y-%m-%d"),
+            baseline_true,
+            baseline_pred,
+        ),
+    }
 
     if run_model in {"all", "lgbm"} and cfg.lgbm.enabled:
         lgbm_result = train_lightgbm_models(
@@ -154,9 +194,7 @@ def run(
 
     if run_model in {"all", "gru"} and cfg.gru.enabled:
         gru_result = train_gru_model(
-            train_df=splits.train,
-            val_df=splits.val,
-            test_df=splits.test,
+            frame=feature_df,
             feature_columns=feature_cols,
             sequence_length=cfg.gru.sequence_length,
             hidden_dim=cfg.gru.hidden_dim,
@@ -174,8 +212,36 @@ def run(
             prediction_output_dir=prediction_dir,
             seed=cfg.run.seed,
             device=cfg.gru.device,
+            train_end=cfg.data.train_end,
+            val_end=cfg.data.val_end,
+            test_end=cfg.data.test_end,
         )
         summary["gru_attention"] = gru_result.metrics
+
+    if run_model in {"all", "lstm"} and cfg.lstm.enabled:
+        lstm_result = train_lstm_model(
+            frame=feature_df,
+            feature_columns=feature_cols,
+            sequence_length=cfg.lstm.sequence_length,
+            hidden_dim=cfg.lstm.hidden_dim,
+            num_layers=cfg.lstm.num_layers,
+            dropout=cfg.lstm.dropout,
+            batch_size=cfg.lstm.batch_size,
+            epochs=cfg.lstm.epochs,
+            learning_rate=cfg.lstm.learning_rate,
+            patience=cfg.lstm.patience,
+            weight_decay=cfg.lstm.weight_decay,
+            grad_clip_norm=cfg.lstm.grad_clip_norm,
+            model_output_path=cfg.lstm.model_output_path,
+            metrics_output_path=cfg.lstm.metrics_output_path,
+            prediction_output_dir=prediction_dir,
+            seed=cfg.run.seed,
+            device=cfg.lstm.device,
+            train_end=cfg.data.train_end,
+            val_end=cfg.data.val_end,
+            test_end=cfg.data.test_end,
+        )
+        summary["lstm_attention"] = lstm_result.metrics
 
     if run_model in {"all", "prophet"} and cfg.prophet.enabled:
         prophet_result = train_prophet_model(

@@ -13,63 +13,12 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
 from .dataset import build_sequence_datasets
-from .metrics import interval_mean_width, mae, mape, picp, prediction_preview, rmse, smape
-
-
-class AdditiveAttention(nn.Module):
-    def __init__(self, hidden_dim: int) -> None:
-        super().__init__()
-        self.query = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.key = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.energy = nn.Linear(hidden_dim, 1, bias=False)
-
-    def forward(
-        self, outputs: torch.Tensor, last_hidden: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        score = self.energy(
-            torch.tanh(self.query(last_hidden).unsqueeze(1) + self.key(outputs))
-        ).squeeze(-1)
-        weights = torch.softmax(score, dim=1)
-        context = torch.bmm(weights.unsqueeze(1), outputs).squeeze(1)
-        return context, weights
-
-
-class GruAttentionRegressor(nn.Module):
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int,
-        num_layers: int,
-        dropout: float,
-        output_dim: int,
-    ) -> None:
-        super().__init__()
-        gru_dropout = dropout if num_layers > 1 else 0.0
-        self.gru = nn.GRU(
-            input_size=input_dim,
-            hidden_size=hidden_dim,
-            num_layers=num_layers,
-            dropout=gru_dropout,
-            batch_first=True,
-        )
-        self.attention = AdditiveAttention(hidden_dim)
-        self.head = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_dim),
-        )
-
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        outputs, hidden = self.gru(x)
-        last_hidden = hidden[-1]
-        context, weights = self.attention(outputs, last_hidden)
-        pred = self.head(torch.cat([context, last_hidden], dim=1))
-        return pred, weights
+from .metrics import mae, mape, prediction_preview, rmse, smape
+from .model import LSTMAttentionRegressor
 
 
 @dataclass(frozen=True)
-class GruResult:
+class LstmResult:
     metrics: dict[str, float | int | str]
     prediction_path: Path
 
@@ -123,19 +72,11 @@ def _to_loader(
     )
 
 
-def _pinball_loss(
-    pred: torch.Tensor, target: torch.Tensor, quantile: float
-) -> torch.Tensor:
-    diff = target - pred
-    return torch.mean(torch.maximum(quantile * diff, (quantile - 1.0) * diff))
-
-
 def _run_epoch(
-    model: GruAttentionRegressor,
+    model: LSTMAttentionRegressor,
     loader: DataLoader,
     *,
     optimizer: torch.optim.Optimizer | None,
-    quantiles_enabled: bool,
     grad_clip_norm: float,
     device: torch.device,
     desc: str,
@@ -144,21 +85,13 @@ def _run_epoch(
     total_loss = 0.0
     total_batches = 0
     iterator = tqdm(loader, desc=desc, leave=False, unit="batch", dynamic_ncols=True)
-    huber = nn.HuberLoss(delta=1.0)
+    loss_fn = nn.HuberLoss(delta=1.0)
     for x, y in iterator:
         x = x.to(device)
         y = y.to(device)
         with torch.set_grad_enabled(optimizer is not None):
             pred, _ = model(x)
-            if quantiles_enabled:
-                p10, p50, p90 = pred[:, 0], pred[:, 1], pred[:, 2]
-                loss = (
-                    _pinball_loss(p10, y, 0.1)
-                    + _pinball_loss(p50, y, 0.5)
-                    + _pinball_loss(p90, y, 0.9)
-                ) / 3.0
-            else:
-                loss = huber(pred[:, 0], y)
+            loss = loss_fn(pred[:, 0], y)
             if optimizer is not None:
                 optimizer.zero_grad()
                 loss.backward()
@@ -168,11 +101,11 @@ def _run_epoch(
         total_batches += 1
         iterator.set_postfix(loss=f"{float(loss.detach().cpu().item()):.4f}")
     if total_batches == 0:
-        raise ValueError("Empty dataloader for GRU training.")
+        raise ValueError("Empty dataloader for LSTM training.")
     return total_loss / total_batches
 
 
-def train_gru_model(
+def train_lstm_model(
     *,
     frame: pd.DataFrame,
     feature_columns: list[str],
@@ -186,7 +119,6 @@ def train_gru_model(
     patience: int,
     weight_decay: float,
     grad_clip_norm: float,
-    quantiles_enabled: bool,
     model_output_path: Path,
     metrics_output_path: Path,
     prediction_output_dir: Path,
@@ -195,7 +127,7 @@ def train_gru_model(
     train_end: str,
     val_end: str,
     test_end: str,
-) -> GruResult:
+) -> LstmResult:
     _seed_everything(seed)
     resolved_device = _resolve_device(device)
     bundle = build_sequence_datasets(
@@ -208,13 +140,11 @@ def train_gru_model(
         test_end=test_end,
     )
 
-    output_dim = 3 if quantiles_enabled else 1
-    model = GruAttentionRegressor(
+    model = LSTMAttentionRegressor(
         input_dim=len(feature_columns),
         hidden_dim=hidden_dim,
         num_layers=num_layers,
         dropout=dropout,
-        output_dim=output_dim,
     ).to(resolved_device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay
@@ -224,25 +154,23 @@ def train_gru_model(
     best_state: dict[str, torch.Tensor] | None = None
     wait = 0
     for epoch in tqdm(
-        range(1, epochs + 1), desc="GRU epochs", unit="epoch", dynamic_ncols=True
+        range(1, epochs + 1), desc="LSTM epochs", unit="epoch", dynamic_ncols=True
     ):
         _run_epoch(
             model,
             bundle.train_loader,
             optimizer=optimizer,
-            quantiles_enabled=quantiles_enabled,
             grad_clip_norm=grad_clip_norm,
             device=resolved_device,
-            desc=f"gru train e{epoch}",
+            desc=f"lstm train e{epoch}",
         )
         val_loss = _run_epoch(
             model,
             bundle.val_loader,
             optimizer=None,
-            quantiles_enabled=quantiles_enabled,
             grad_clip_norm=grad_clip_norm,
             device=resolved_device,
-            desc=f"gru val e{epoch}",
+            desc=f"lstm val e{epoch}",
         )
         if val_loss < best_val:
             best_val = val_loss
@@ -256,7 +184,7 @@ def train_gru_model(
                 break
 
     if best_state is None:
-        raise RuntimeError("GRU training failed to produce a checkpoint.")
+        raise RuntimeError("LSTM training failed to produce a checkpoint.")
     model.load_state_dict(best_state)
     model.eval()
 
@@ -270,16 +198,7 @@ def train_gru_model(
             attn_rows.append(attn.cpu().numpy())
     pred_arr = np.concatenate(preds, axis=0)
     y_true = bundle.test_target_values.astype(float)
-
-    if quantiles_enabled:
-        p10 = pred_arr[:, 0] * bundle.target_std + bundle.target_mean
-        p50 = pred_arr[:, 1] * bundle.target_std + bundle.target_mean
-        p90 = pred_arr[:, 2] * bundle.target_std + bundle.target_mean
-        y_pred = p50
-    else:
-        y_pred = pred_arr[:, 0] * bundle.target_std + bundle.target_mean
-        p10 = np.full_like(y_pred, np.nan)
-        p90 = np.full_like(y_pred, np.nan)
+    y_pred = pred_arr[:, 0] * bundle.target_std + bundle.target_mean
 
     model_output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -290,8 +209,12 @@ def train_gru_model(
             "feature_std": bundle.feature_std.tolist(),
             "target_mean": bundle.target_mean,
             "target_std": bundle.target_std,
-            "quantiles_enabled": quantiles_enabled,
             "sequence_length": sequence_length,
+            "model_config": {
+                "hidden_dim": hidden_dim,
+                "num_layers": num_layers,
+                "dropout": dropout,
+            },
         },
         model_output_path,
     )
@@ -299,19 +222,17 @@ def train_gru_model(
     np.save(attn_output_path, np.concatenate(attn_rows, axis=0))
 
     prediction_output_dir.mkdir(parents=True, exist_ok=True)
-    prediction_path = prediction_output_dir / "gru_predictions.csv"
+    prediction_path = prediction_output_dir / "lstm_predictions.csv"
     pd.DataFrame(
         {
             "date": bundle.test_target_dates.dt.strftime("%Y-%m-%d"),
             "y_true": y_true,
             "y_pred": y_pred,
-            "y_pred_p10": p10,
-            "y_pred_p90": p90,
         }
     ).to_csv(prediction_path, index=False)
 
     metrics: dict[str, float | int | str] = {
-        "model": "gru_attention",
+        "model": "lstm_attention",
         "test_mae": mae(y_true, y_pred),
         "test_rmse": rmse(y_true, y_pred),
         "test_mape": mape(y_true, y_pred),
@@ -322,12 +243,8 @@ def train_gru_model(
             bundle.test_target_dates.dt.strftime("%Y-%m-%d"), y_true, y_pred
         ),
     }
-    if quantiles_enabled:
-        metrics["test_picp"] = picp(y_true, p10, p90)
-        metrics["test_interval_width"] = interval_mean_width(p10, p90)
-
     metrics_output_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_output_path.write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return GruResult(metrics=metrics, prediction_path=prediction_path)
+    return LstmResult(metrics=metrics, prediction_path=prediction_path)

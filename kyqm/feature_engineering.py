@@ -7,6 +7,7 @@ import pandas as pd
 
 
 TARGET_COLUMN = "target"
+TARGET_DATE_COLUMN = "target_date"
 BASE_COLUMNS = ["local_price", "temp_avg", "precip", "sentiment_score"]
 
 
@@ -17,12 +18,16 @@ class FeatureSplits:
     test: pd.DataFrame
 
 
-def build_feature_table(cleaned: pd.DataFrame) -> pd.DataFrame:
+def build_feature_table(cleaned: pd.DataFrame, *, forecast_horizon: int = 1) -> pd.DataFrame:
+    if forecast_horizon < 1:
+        raise ValueError("forecast_horizon must be >= 1.")
+
     frame = cleaned.copy()
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame = frame.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
 
-    frame[TARGET_COLUMN] = frame["local_price"].astype(float)
+    frame[TARGET_COLUMN] = frame["local_price"].shift(-forecast_horizon).astype(float)
+    frame[TARGET_DATE_COLUMN] = frame["date"].shift(-forecast_horizon)
 
     for lag in (1, 2, 3, 7, 14, 30):
         frame[f"lag_{lag}"] = frame["local_price"].shift(lag)
@@ -61,15 +66,15 @@ def split_by_time(
     frame: pd.DataFrame, *, train_end: str, val_end: str, test_end: str
 ) -> FeatureSplits:
     data = frame.copy()
-    data["date"] = pd.to_datetime(data["date"], errors="coerce")
-    train = data[data["date"] <= pd.Timestamp(train_end)].copy()
+    data[TARGET_DATE_COLUMN] = pd.to_datetime(data[TARGET_DATE_COLUMN], errors="coerce")
+    train = data[data[TARGET_DATE_COLUMN] <= pd.Timestamp(train_end)].copy()
     val = data[
-        (data["date"] > pd.Timestamp(train_end))
-        & (data["date"] <= pd.Timestamp(val_end))
+        (data[TARGET_DATE_COLUMN] > pd.Timestamp(train_end))
+        & (data[TARGET_DATE_COLUMN] <= pd.Timestamp(val_end))
     ].copy()
     test = data[
-        (data["date"] > pd.Timestamp(val_end))
-        & (data["date"] <= pd.Timestamp(test_end))
+        (data[TARGET_DATE_COLUMN] > pd.Timestamp(val_end))
+        & (data[TARGET_DATE_COLUMN] <= pd.Timestamp(test_end))
     ].copy()
     if train.empty or val.empty or test.empty:
         raise ValueError("Feature split produced empty train/val/test partition.")
@@ -77,4 +82,8 @@ def split_by_time(
 
 
 def feature_columns(frame: pd.DataFrame) -> list[str]:
-    return [col for col in frame.columns if col not in {"date", TARGET_COLUMN}]
+    return [
+        col
+        for col in frame.columns
+        if col not in {"date", TARGET_COLUMN, TARGET_DATE_COLUMN}
+    ]
