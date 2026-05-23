@@ -74,14 +74,29 @@ def train_ridge_model(
     with (model_output_dir / "model.pkl").open("wb") as f:
         pickle.dump(model, f)
 
-    prediction_dates = test_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d")
+    val_prediction_dates = val_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d")
+    test_prediction_dates = test_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d")
     prediction_path = prediction_output_dir / prediction_filename
-    pd.DataFrame(
-        {
-            "date": prediction_dates,
-            "y_true": y_test,
-            "y_pred": pred_test,
-        }
+    pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "date": val_prediction_dates,
+                    "split": "val",
+                    "y_true": y_val,
+                    "y_pred": pred_val,
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "date": test_prediction_dates,
+                    "split": "test",
+                    "y_true": y_test,
+                    "y_pred": pred_test,
+                }
+            ),
+        ],
+        ignore_index=True,
     ).to_csv(prediction_path, index=False)
 
     metrics: dict[str, float | int | str] = {
@@ -92,7 +107,9 @@ def train_ridge_model(
         "test_rmse": rmse(y_test, pred_test),
         "test_mape": mape(y_test, pred_test),
         "test_smape": smape(y_test, pred_test),
-        "prediction_preview": prediction_preview(prediction_dates, y_test, pred_test),
+        "prediction_preview": prediction_preview(
+            test_prediction_dates, y_test, pred_test
+        ),
     }
     (model_output_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2),

@@ -173,7 +173,7 @@ uv run streamlit run app.py
 ```
 
 The Streamlit app is the primary visualization path for long-horizon analysis and now focuses only on:
-- **Actual vs prediction**: dark-mode per-horizon test-set traces for `7d / 30d / 90d`, covering both LightGBM and Ridge across multiple held-out evaluation samples
+- **实际值 vs 预测值**：深色模式下展示 `7d / 30d / 90d` 三个周期在完整评估集（验证集 + 测试集）上的预测曲线，包含 LightGBM 与 Ridge
 
 Current validated long-horizon outcome on the repo data:
 - `1d`: LightGBM is still effectively tied with / slightly worse than naive
