@@ -88,9 +88,12 @@ uv run python -m swyb --config swyb/config.toml
 `kyqm` now supports multiple forecasting models with shared feature engineering:
 - LightGBM (point + quantile P10/P90)
 - GRU + attention (point/median + quantile P10/P90)
+- LSTM + attention (point forecast)
 - Prophet baseline (point forecast)
 
 Province and city filtering for market data now use `cpca` parsing from both `market` and `county_name`, with no hardcoded `area_code` province table. `city_name` is optional in `kyqm/config.toml`; when set, only rows with a confidently resolved matching city are retained. `新疆生产建设兵团` rows are still merged into `新疆` totals.
+
+`kyqm` now trains on an explicit **1-day-ahead** target by default (`forecast_horizon = 1`). The model summary also includes a `naive_last_price` baseline for comparison.
 
 Run all models:
 
@@ -103,6 +106,7 @@ Run a single model:
 ```bash
 uv run python -m kyqm --model lgbm
 uv run python -m kyqm --model gru
+uv run python -m kyqm --model lstm
 uv run python -m kyqm --model prophet
 ```
 
@@ -113,17 +117,19 @@ Optional city filter in `kyqm/config.toml`:
 province_name = "山东省"
 city_name = "淄博"
 product_name = "黄瓜"
+forecast_horizon = 1
 ```
 
-Helpful overrides (mainly for GRU smoke/debug runs):
+Helpful overrides (for GRU/LSTM smoke or debug runs):
 
 ```bash
 uv run python -m kyqm --model gru --epochs 5 --batch-size 16 --learning-rate 0.001 --device cpu
+uv run python -m kyqm --model lstm --epochs 5 --batch-size 16 --learning-rate 0.001 --device cpu
 ```
 
 Main outputs:
 - `data/cleaned_data.csv`
 - `data/feature_data.csv`
 - `data/predictions/*.csv` (per-model predictions)
-- `data/model_summary.json` (cross-model metrics summary)
-- `data/models/lgbm/*`, `data/models/gru/*`, `data/models/prophet/*`
+- `data/model_summary.json` (cross-model metrics summary, including `naive_last_price`)
+- `data/models/lgbm/*`, `data/models/gru/*`, `data/models/lstm/*`, `data/models/prophet/*`

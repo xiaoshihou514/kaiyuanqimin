@@ -9,8 +9,8 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from .feature_engineering import TARGET_COLUMN
-from .metrics import interval_mean_width, mae, mape, picp, rmse, smape
+from .feature_engineering import TARGET_COLUMN, TARGET_DATE_COLUMN
+from .metrics import interval_mean_width, mae, mape, picp, prediction_preview, rmse, smape
 
 
 @dataclass(frozen=True)
@@ -158,7 +158,7 @@ def train_lightgbm_models(
 
     pred_frame = pd.DataFrame(
         {
-            "date": test_df["date"].dt.strftime("%Y-%m-%d"),
+            "date": test_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d"),
             "y_true": y_test,
             "y_pred": pred_point,
             "y_pred_p10": pred_lower,
@@ -174,6 +174,9 @@ def train_lightgbm_models(
         "test_rmse": rmse(y_test, pred_point),
         "test_mape": mape(y_test, pred_point),
         "test_smape": smape(y_test, pred_point),
+        "prediction_preview": prediction_preview(
+            test_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d"), y_test, pred_point
+        ),
     }
     if quantiles_enabled:
         metrics["test_picp"] = picp(y_test, pred_lower, pred_upper)

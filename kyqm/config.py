@@ -21,6 +21,7 @@ class DataConfig:
     province_name: str
     city_name: str | None
     product_name: str
+    forecast_horizon: int
     start_date: str
     end_date: str
     train_end: str
@@ -67,6 +68,24 @@ class GruConfig:
 
 
 @dataclass(frozen=True)
+class LstmConfig:
+    enabled: bool
+    sequence_length: int
+    hidden_dim: int
+    num_layers: int
+    dropout: float
+    batch_size: int
+    epochs: int
+    learning_rate: float
+    patience: int
+    weight_decay: float
+    grad_clip_norm: float
+    model_output_path: Path
+    metrics_output_path: Path
+    device: str
+
+
+@dataclass(frozen=True)
 class ProphetConfig:
     enabled: bool
     daily_seasonality: bool
@@ -88,6 +107,7 @@ class KyqmConfig:
     data: DataConfig
     lgbm: LgbmConfig
     gru: GruConfig
+    lstm: LstmConfig
     prophet: ProphetConfig
     run: RunConfig
 
@@ -99,6 +119,7 @@ def load_config(config_path: Path) -> KyqmConfig:
     data = raw.get("data", {})
     lgbm = raw.get("lgbm", {})
     gru = raw.get("gru", {})
+    lstm = raw.get("lstm", {})
     prophet = raw.get("prophet", {})
     run = raw.get("run", {})
 
@@ -117,6 +138,7 @@ def load_config(config_path: Path) -> KyqmConfig:
             province_name=str(data.get("province_name", "山东省")),
             city_name=_optional_text(data.get("city_name")),
             product_name=str(data.get("product_name", "黄瓜")),
+            forecast_horizon=int(data.get("forecast_horizon", 1)),
             start_date=str(data.get("start_date", "2020-01-01")),
             end_date=str(data.get("end_date", "2026-05-21")),
             train_end=str(data.get("train_end", "2024-12-31")),
@@ -162,6 +184,26 @@ def load_config(config_path: Path) -> KyqmConfig:
                 str(gru.get("metrics_output_path", "data/models/gru/metrics.json"))
             ),
             device=str(gru.get("device", "auto")),
+        ),
+        lstm=LstmConfig(
+            enabled=bool(lstm.get("enabled", True)),
+            sequence_length=int(lstm.get("sequence_length", 30)),
+            hidden_dim=int(lstm.get("hidden_dim", 64)),
+            num_layers=int(lstm.get("num_layers", 2)),
+            dropout=float(lstm.get("dropout", 0.3)),
+            batch_size=int(lstm.get("batch_size", 32)),
+            epochs=int(lstm.get("epochs", 100)),
+            learning_rate=float(lstm.get("learning_rate", 1e-3)),
+            patience=int(lstm.get("patience", 15)),
+            weight_decay=float(lstm.get("weight_decay", 1e-4)),
+            grad_clip_norm=float(lstm.get("grad_clip_norm", 1.0)),
+            model_output_path=Path(
+                str(lstm.get("model_output_path", "data/models/lstm/model.pth"))
+            ),
+            metrics_output_path=Path(
+                str(lstm.get("metrics_output_path", "data/models/lstm/metrics.json"))
+            ),
+            device=str(lstm.get("device", "auto")),
         ),
         prophet=ProphetConfig(
             enabled=bool(prophet.get("enabled", True)),

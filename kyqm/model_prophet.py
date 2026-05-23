@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 from prophet import Prophet
 
-from .feature_engineering import TARGET_COLUMN
-from .metrics import mae, mape, rmse, smape
+from .feature_engineering import TARGET_COLUMN, TARGET_DATE_COLUMN
+from .metrics import mae, mape, prediction_preview, rmse, smape
 
 
 @dataclass(frozen=True)
@@ -30,8 +30,8 @@ def train_prophet_model(
     yearly_seasonality: bool,
 ) -> ProphetResult:
     regressors = ["temp_avg", "precip", "sentiment_score"]
-    fit_df = train_df[["date", TARGET_COLUMN, *regressors]].copy()
-    fit_df = fit_df.rename(columns={"date": "ds", TARGET_COLUMN: "y"})
+    fit_df = train_df[[TARGET_DATE_COLUMN, TARGET_COLUMN, *regressors]].copy()
+    fit_df = fit_df.rename(columns={TARGET_DATE_COLUMN: "ds", TARGET_COLUMN: "y"})
     fit_df["ds"] = pd.to_datetime(fit_df["ds"])
 
     model = Prophet(
@@ -43,8 +43,8 @@ def train_prophet_model(
         model.add_regressor(reg)
     model.fit(fit_df)
 
-    future_df = test_df[["date", *regressors]].copy()
-    future_df = future_df.rename(columns={"date": "ds"})
+    future_df = test_df[[TARGET_DATE_COLUMN, *regressors]].copy()
+    future_df = future_df.rename(columns={TARGET_DATE_COLUMN: "ds"})
     future_df["ds"] = pd.to_datetime(future_df["ds"])
     forecast = model.predict(future_df)
 
@@ -71,6 +71,9 @@ def train_prophet_model(
         "test_rmse": rmse(y_true, y_pred),
         "test_mape": mape(y_true, y_pred),
         "test_smape": smape(y_true, y_pred),
+        "prediction_preview": prediction_preview(
+            future_df["ds"].dt.strftime("%Y-%m-%d"), y_true, y_pred
+        ),
     }
     metrics_path = model_output_path.with_name("metrics.json")
     metrics_path.write_text(

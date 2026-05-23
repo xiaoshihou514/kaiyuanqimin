@@ -1,11 +1,12 @@
 [data]
-market_prices_path = "data/market_prices.csv"
-weather_path = "data/weather.csv"
+market_prices_path = "data/market_prices__shucai__黄瓜__170130.csv"
+weather_path = "data/weather_山东.csv"
 cleaned_output_path = "data/cleaned_data.csv"
 feature_output_path = "data/feature_data.csv"
 province_name = "山东省"
 city_name = ""
 product_name = "黄瓜"
+forecast_horizon = 1
 start_date = "2020-01-01"
 end_date = "2026-05-21"
 train_end = "2024-12-31"
@@ -44,6 +45,22 @@ grad_clip_norm = 1.0
 quantiles_enabled = true
 model_output_path = "data/models/gru/model.pth"
 metrics_output_path = "data/models/gru/metrics.json"
+device = "auto"
+
+[lstm]
+enabled = true
+sequence_length = 30
+hidden_dim = 64
+num_layers = 2
+dropout = 0.3
+batch_size = 32
+epochs = 100
+learning_rate = 0.001
+patience = 15
+weight_decay = 0.0001
+grad_clip_norm = 1.0
+model_output_path = "data/models/lstm/model.pth"
+metrics_output_path = "data/models/lstm/metrics.json"
 device = "auto"
 
 [prophet]
