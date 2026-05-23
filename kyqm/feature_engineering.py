@@ -236,6 +236,18 @@ def build_long_horizon_feature_table(
         target_month = int(target_date.month)
         target_week = int(target_date.isocalendar().week)
         quarter = int(target_date.quarter)
+        recent_returns_7 = history[LOCAL_PRICE_COLUMN].pct_change().replace(
+            [np.inf, -np.inf], np.nan
+        )
+        recent_returns_7 = recent_returns_7.tail(7).dropna()
+        recent_window_7 = history[LOCAL_PRICE_COLUMN].tail(7)
+        recent_range_7 = float(recent_window_7.max() - recent_window_7.min())
+        recent_return_std_7 = float(recent_returns_7.std(ddof=0)) if not recent_returns_7.empty else 0.0
+        recent_trend_7 = float(
+            frame.at[anchor_idx, LOCAL_PRICE_COLUMN]
+            - frame.at[anchor_idx - 7, LOCAL_PRICE_COLUMN]
+        )
+        recent_vol_anchor = max(float(history[LOCAL_PRICE_COLUMN].tail(30).std(ddof=0)), 1e-6)
 
         row: dict[str, float | int | str] = {
             "anchor_date": anchor_date.strftime("%Y-%m-%d"),
@@ -246,6 +258,7 @@ def build_long_horizon_feature_table(
             "local_price": float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN]),
             "naive_current_price": float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN]),
             "naive_seasonal_price": seasonal_naive_price,
+            "prior_year_same_day_price": seasonal_naive_price,
             "selected_baseline": (
                 seasonal_naive_price if horizon_days in {30, 90} else float(frame.at[anchor_idx, LOCAL_PRICE_COLUMN])
             ),
@@ -270,6 +283,10 @@ def build_long_horizon_feature_table(
                 frame.at[anchor_idx, LOCAL_PRICE_COLUMN]
                 - frame.at[anchor_idx - 90, LOCAL_PRICE_COLUMN]
             ),
+            "recent_return_std_7": recent_return_std_7,
+            "recent_price_range_7": recent_range_7,
+            "rapid_rise_flag_7": float(recent_trend_7 > recent_vol_anchor),
+            "rapid_drop_flag_7": float(recent_trend_7 < -recent_vol_anchor),
             "week_sin": float(np.sin(2.0 * np.pi * target_week / 52.0)),
             "week_cos": float(np.cos(2.0 * np.pi * target_week / 52.0)),
             "month_sin": float(np.sin(2.0 * np.pi * target_month / 12.0)),

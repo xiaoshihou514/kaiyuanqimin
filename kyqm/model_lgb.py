@@ -132,6 +132,9 @@ def train_lightgbm_models(
     baseline_column: str | None = "local_price",
     model_name: str = "lightgbm",
     prediction_filename: str = "lgbm_predictions.csv",
+    point_objective: str = "regression",
+    point_alpha: float | None = None,
+    sample_weight: np.ndarray | None = None,
 ) -> LgbmResult:
     x_train = train_df[feature_columns]
     y_train = train_df[TARGET_COLUMN].to_numpy(dtype=float)
@@ -162,7 +165,8 @@ def train_lightgbm_models(
 
     point_model = lgb.LGBMRegressor(
         **_build_params(
-            objective="regression",
+            objective=point_objective,
+            alpha=point_alpha,
             learning_rate=learning_rate,
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -175,6 +179,7 @@ def train_lightgbm_models(
     point_model.fit(
         x_train,
         y_train_fit,
+        sample_weight=sample_weight,
         eval_set=[(x_val, y_val_fit)],
         eval_metric="l2",
         callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
@@ -219,6 +224,7 @@ def train_lightgbm_models(
         lower_model.fit(
             x_train,
             y_train_fit,
+            sample_weight=sample_weight,
             eval_set=[(x_val, y_val_fit)],
             eval_metric="quantile",
             callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
@@ -226,6 +232,7 @@ def train_lightgbm_models(
         upper_model.fit(
             x_train,
             y_train_fit,
+            sample_weight=sample_weight,
             eval_set=[(x_val, y_val_fit)],
             eval_metric="quantile",
             callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
@@ -314,3 +321,117 @@ def train_lightgbm_models(
         encoding="utf-8",
     )
     return LgbmResult(metrics=metrics, prediction_path=prediction_path)
+
+
+def lgbm_oof_and_eval_predictions(
+    *,
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_columns: list[str],
+    learning_rate: float,
+    n_estimators: int,
+    max_depth: int,
+    num_leaves: int,
+    min_data_in_leaf: int,
+    lambda_l1: float,
+    lambda_l2: float,
+    cv_splits: int,
+    baseline_column: str | None = None,
+    point_objective: str = "regression",
+    point_alpha: float | None = None,
+    sample_weight: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
+    x_train = train_df[feature_columns]
+    x_val = val_df[feature_columns]
+    x_test = test_df[feature_columns]
+    y_train = train_df[TARGET_COLUMN].to_numpy(dtype=float)
+
+    train_baseline = (
+        train_df[baseline_column].to_numpy(dtype=float)
+        if baseline_column is not None
+        else np.zeros(len(train_df), dtype=float)
+    )
+    val_baseline = (
+        val_df[baseline_column].to_numpy(dtype=float)
+        if baseline_column is not None
+        else np.zeros(len(val_df), dtype=float)
+    )
+    test_baseline = (
+        test_df[baseline_column].to_numpy(dtype=float)
+        if baseline_column is not None
+        else np.zeros(len(test_df), dtype=float)
+    )
+    y_train_fit = y_train - train_baseline if baseline_column is not None else y_train
+
+    split_count = min(cv_splits, len(train_df) - 1)
+    if split_count < 2:
+        raise ValueError("Need at least 3 training rows for LightGBM OOF predictions.")
+
+    splitter = TimeSeriesSplit(n_splits=split_count)
+    train_oof_pred = np.full(len(train_df), np.nan, dtype=float)
+    for fit_idx, holdout_idx in splitter.split(x_train):
+        model = lgb.LGBMRegressor(
+            **_build_params(
+                objective=point_objective,
+                alpha=point_alpha,
+                learning_rate=learning_rate,
+                n_estimators=n_estimators,
+                max_depth=max_depth,
+                num_leaves=num_leaves,
+                min_data_in_leaf=min_data_in_leaf,
+                lambda_l1=lambda_l1,
+                lambda_l2=lambda_l2,
+            )
+        )
+        fit_sample_weight = sample_weight[fit_idx] if sample_weight is not None else None
+        model.fit(
+            x_train.iloc[fit_idx],
+            y_train_fit[fit_idx],
+            sample_weight=fit_sample_weight,
+        )
+        train_oof_pred[holdout_idx] = (
+            model.predict(x_train.iloc[holdout_idx]) + train_baseline[holdout_idx]
+        )
+
+    if np.isnan(train_oof_pred).any():
+        fallback_model = lgb.LGBMRegressor(
+            **_build_params(
+                objective=point_objective,
+                alpha=point_alpha,
+                learning_rate=learning_rate,
+                n_estimators=n_estimators,
+                max_depth=max_depth,
+                num_leaves=num_leaves,
+                min_data_in_leaf=min_data_in_leaf,
+                lambda_l1=lambda_l1,
+                lambda_l2=lambda_l2,
+            )
+        )
+        fallback_model.fit(x_train, y_train_fit, sample_weight=sample_weight)
+        missing_mask = np.isnan(train_oof_pred)
+        train_oof_pred[missing_mask] = (
+            fallback_model.predict(x_train.loc[missing_mask]) + train_baseline[missing_mask]
+        )
+
+    final_model = lgb.LGBMRegressor(
+        **_build_params(
+            objective=point_objective,
+            alpha=point_alpha,
+            learning_rate=learning_rate,
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            num_leaves=num_leaves,
+            min_data_in_leaf=min_data_in_leaf,
+            lambda_l1=lambda_l1,
+            lambda_l2=lambda_l2,
+        )
+    )
+    final_model.fit(x_train, y_train_fit, sample_weight=sample_weight)
+    val_pred = final_model.predict(x_val) + val_baseline
+    test_pred = final_model.predict(x_test) + test_baseline
+    return {
+        "train_oof_pred": train_oof_pred,
+        "val_pred": val_pred,
+        "test_pred": test_pred,
+    }

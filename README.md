@@ -162,9 +162,20 @@ Main long-horizon outputs:
 - `data/feature_data_long.csv`
 - `data/model_summary_long.json`
 - `data/model_comparison_long.csv`
+- `data/model_candidates_long.csv`
 - `data/predictions/long/**`
 - `data/models/long/lgbm/**`
 - `data/models/long/ridge/**`
+
+The long-horizon pipeline now also runs a validation-first heavy performance pass over the `LONG_PERF_2.md` ideas:
+- 7天差分目标 / 时移修正候选
+- 30/90天 stacking / 动态混合候选
+- 自适应 conformal / split conformal / 90天 EVT 候选
+- 多分位数 P05/P25/P50/P75/P95 重训
+- 极端值感知的 weighted Huber / 低正则候选
+- 按 horizon 的最终选择
+
+`data/model_candidates_long.csv` records the candidate leaderboard per horizon, and `data/model_summary_long.json` / `data/model_comparison_long.csv` keep the final selected outputs.
 
 Launch the Streamlit long-horizon app after generating those artifacts:
 
@@ -172,11 +183,13 @@ Launch the Streamlit long-horizon app after generating those artifacts:
 uv run streamlit run app.py
 ```
 
-The Streamlit app is the primary visualization path for long-horizon analysis and now focuses only on:
-- **实际值 vs 预测值**：深色模式下展示 `7d / 30d / 90d` 三个周期在完整评估集（验证集 + 测试集）上的预测曲线，包含 LightGBM 与 Ridge
+The Streamlit app is the primary visualization path for long-horizon analysis and now focuses on the refreshed `LONG_PERF_2` selected results:
+- **最终选中方案的实际值 vs 预测值**：深色模式下展示 `7d / 30d / 90d` 三个周期在完整评估集（验证集 + 测试集）上的最终预测曲线
+- **候选方案排行榜**：按 horizon 展示 `data/model_candidates_long.csv`
+- **最终方案 vs 基线**：展示 `data/model_comparison_long.csv` 中最终选中方案相对基线的 MAE 比值
 
 Current validated long-horizon outcome on the repo data:
 - `1d`: LightGBM is still effectively tied with / slightly worse than naive
-- `7d`: models still do not beat the current-price naive baseline
-- `30d`: LightGBM and Ridge both beat the seasonal naive baseline, with LightGBM stronger
-- `90d`: both still beat the seasonal naive baseline, again with LightGBM stronger
+- `7d`: the final winner is `mean_blend`, but it still does not beat the current-price naive baseline
+- `30d`: the final winner is `dynamic_blend`, and it clearly beats the seasonal naive baseline (`MAE ratio ~ 0.323`)
+- `90d`: the final winner is also `dynamic_blend`, and it beats the seasonal naive baseline (`MAE ratio ~ 0.711`)
