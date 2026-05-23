@@ -15,10 +15,7 @@ from .feature_engineering import (
     split_by_time,
 )
 from .metrics import baseline_metrics, prediction_preview
-from .model_gru import train_gru_model
 from .model_lgb import train_lightgbm_models
-from .model_lstm import train_lstm_model
-from .model_prophet import add_prophet_seasonal_features, train_prophet_model
 from .model_ridge import train_ridge_model
 from .prepare import PrepareParams, prepare_training_frame
 
@@ -145,9 +142,16 @@ def _prepare_cleaned(cfg: KyqmConfig):
     )
 
 
-def _run_short_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | int | str]]:
+def _run_short_pipeline(
+    cfg: KyqmConfig,
+    cleaned,
+    *,
+    run_model_override: str | None = None,
+) -> dict[str, dict[str, float | int | str]]:
     feature_df = build_feature_table(cleaned, forecast_horizon=cfg.data.forecast_horizon)
     if cfg.lgbm.use_prophet_components:
+        from .model_prophet import add_prophet_seasonal_features
+
         feature_df = add_prophet_seasonal_features(
             feature_df,
             train_end=cfg.data.train_end,
@@ -173,7 +177,7 @@ def _run_short_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float |
     ]
 
     summary: dict[str, dict[str, float | int | str]] = {}
-    run_model = cfg.run.model
+    run_model = run_model_override or cfg.run.model
     prediction_dir = cfg.run.prediction_output_dir
     prediction_dir.mkdir(parents=True, exist_ok=True)
 
@@ -213,6 +217,8 @@ def _run_short_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float |
         summary["lightgbm"] = lgbm_result.metrics
 
     if run_model in {"all", "gru"} and cfg.gru.enabled:
+        from .model_gru import train_gru_model
+
         gru_result = train_gru_model(
             frame=feature_df,
             feature_columns=recurrent_feature_cols,
@@ -239,6 +245,8 @@ def _run_short_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float |
         summary["gru_attention"] = gru_result.metrics
 
     if run_model in {"all", "lstm"} and cfg.lstm.enabled:
+        from .model_lstm import train_lstm_model
+
         lstm_result = train_lstm_model(
             frame=feature_df,
             feature_columns=recurrent_feature_cols,
@@ -264,6 +272,8 @@ def _run_short_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float |
         summary["lstm_attention"] = lstm_result.metrics
 
     if run_model in {"all", "prophet"} and cfg.prophet.enabled:
+        from .model_prophet import train_prophet_model
+
         prophet_result = train_prophet_model(
             train_df=splits.train,
             test_df=splits.test,
@@ -307,7 +317,7 @@ def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | 
     prediction_dir = cfg.long.prediction_output_dir
     prediction_dir.mkdir(parents=True, exist_ok=True)
 
-    short_summary = _run_short_pipeline(cfg, cleaned)
+    short_summary = _run_short_pipeline(cfg, cleaned, run_model_override="lgbm")
     if "naive_last_price" in short_summary:
         baseline_mae_1d = float(short_summary["naive_last_price"]["test_mae"])
         comparison_rows.append(
