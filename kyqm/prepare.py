@@ -16,6 +16,8 @@ PRODUCT_ALIASES = {
     "青椒": "green_pepper",
 }
 PROVINCE_ALIASES = {
+    "北京市": "beijing",
+    "北京": "beijing",
     "山东省": "shandong",
     "河北省": "hebei",
     "河南省": "henan",
@@ -393,6 +395,15 @@ def prepare_training_frame(params: PrepareParams) -> pd.DataFrame:
         )[["date", f"{alias}_cucumber_price"]]
         merged = merged.merge(nearby_daily, on="date", how="left")
 
+    beijing_daily = _daily_price_series(
+        market,
+        province_name="北京市",
+        city_name=None,
+        product_name=params.product_name,
+        value_column="beijing_cucumber_price",
+    )[["date", "beijing_cucumber_price"]]
+    merged = merged.merge(beijing_daily, on="date", how="left")
+
     weather_daily = (
         weather[["date", "temp_avg", "precip"]]
         .drop_duplicates(subset=["date"])
@@ -416,6 +427,7 @@ def prepare_training_frame(params: PrepareParams) -> pd.DataFrame:
             f"{_slug_province_name(province_name)}_cucumber_price"
             for province_name in params.nearby_cucumber_provinces
         ],
+        "beijing_cucumber_price",
     ]
     for column in price_columns:
         if column in merged.columns:
@@ -432,13 +444,19 @@ def prepare_training_frame(params: PrepareParams) -> pd.DataFrame:
     merged["precip_sum_3d"] = (
         merged["precip"].rolling(window=3, min_periods=1).sum().astype(float)
     )
+    merged["precip_sum_7d"] = (
+        merged["precip"].rolling(window=7, min_periods=1).sum().astype(float)
+    )
     merged["temp_mean_7d"] = (
         merged["temp_avg"].rolling(window=7, min_periods=1).mean().astype(float)
     )
+    merged["temp_change_1d"] = merged["temp_avg"].diff().fillna(0.0).astype(float)
+    merged["precip_change_1d"] = merged["precip"].diff().fillna(0.0).astype(float)
+    merged["extreme_precip_flag"] = (merged["precip"] >= 30.0).astype(int)
     merged["heatwave_3d_flag"] = (
         merged["temp_avg"]
         .rolling(window=3, min_periods=3)
-        .apply(lambda values: 1.0 if (values > 30.0).all() else 0.0, raw=True)
+        .apply(lambda values: 1.0 if (values > 32.0).all() else 0.0, raw=True)
         .fillna(0.0)
         .astype(int)
     )
@@ -472,10 +490,15 @@ def prepare_training_frame(params: PrepareParams) -> pd.DataFrame:
             f"{_slug_province_name(province_name)}_cucumber_price"
             for province_name in params.nearby_cucumber_provinces
         ],
+        "beijing_cucumber_price",
         "temp_avg",
         "precip",
         "precip_sum_3d",
+        "precip_sum_7d",
         "temp_mean_7d",
+        "temp_change_1d",
+        "precip_change_1d",
+        "extreme_precip_flag",
         "heatwave_3d_flag",
         "days_to_next_spring_festival",
         "days_to_next_mid_autumn",
