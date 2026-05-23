@@ -112,8 +112,25 @@ class ProphetConfig:
 
 
 @dataclass(frozen=True)
+class LongConfig:
+    enabled: bool
+    horizons: list[int]
+    history_window_days: int
+    anchor_step_days: int
+    augmentation_enabled: bool
+    augmentation_jitter_days: int
+    feature_output_path: Path
+    summary_output_path: Path
+    comparison_output_path: Path
+    prediction_output_dir: Path
+    ridge_model_output_dir: Path
+    lgbm_model_output_dir: Path
+
+
+@dataclass(frozen=True)
 class RunConfig:
     model: str
+    pipeline: str
     seed: int
     summary_output_path: Path
     prediction_output_dir: Path
@@ -126,6 +143,7 @@ class KyqmConfig:
     gru: GruConfig
     lstm: LstmConfig
     prophet: ProphetConfig
+    long: LongConfig
     run: RunConfig
 
 
@@ -138,6 +156,7 @@ def load_config(config_path: Path) -> KyqmConfig:
     gru = raw.get("gru", {})
     lstm = raw.get("lstm", {})
     prophet = raw.get("prophet", {})
+    long = raw.get("long", {})
     run = raw.get("run", {})
 
     return KyqmConfig(
@@ -247,8 +266,35 @@ def load_config(config_path: Path) -> KyqmConfig:
                 str(prophet.get("model_output_path", "data/models/prophet/model.pkl"))
             ),
         ),
+        long=LongConfig(
+            enabled=bool(long.get("enabled", True)),
+            horizons=[int(value) for value in long.get("horizons", [7, 30, 90])],
+            history_window_days=int(long.get("history_window_days", 90)),
+            anchor_step_days=int(long.get("anchor_step_days", 7)),
+            augmentation_enabled=bool(long.get("augmentation_enabled", True)),
+            augmentation_jitter_days=int(long.get("augmentation_jitter_days", 3)),
+            feature_output_path=Path(
+                str(long.get("feature_output_path", "data/feature_data_long.csv"))
+            ),
+            summary_output_path=Path(
+                str(long.get("summary_output_path", "data/model_summary_long.json"))
+            ),
+            comparison_output_path=Path(
+                str(long.get("comparison_output_path", "data/model_comparison_long.csv"))
+            ),
+            prediction_output_dir=Path(
+                str(long.get("prediction_output_dir", "data/predictions/long"))
+            ),
+            ridge_model_output_dir=Path(
+                str(long.get("ridge_model_output_dir", "data/models/long/ridge"))
+            ),
+            lgbm_model_output_dir=Path(
+                str(long.get("lgbm_model_output_dir", "data/models/long/lgbm"))
+            ),
+        ),
         run=RunConfig(
             model=str(run.get("model", "all")),
+            pipeline=str(run.get("pipeline", "short")),
             seed=int(run.get("seed", 42)),
             summary_output_path=Path(
                 str(run.get("summary_output_path", "data/model_summary.json"))

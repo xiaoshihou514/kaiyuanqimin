@@ -52,6 +52,7 @@ def _time_series_cv_mae(
     frame: pd.DataFrame,
     *,
     feature_columns: list[str],
+    baseline_column: str | None,
     learning_rate: float,
     n_estimators: int,
     max_depth: int,
@@ -69,9 +70,13 @@ def _time_series_cv_mae(
     splitter = TimeSeriesSplit(n_splits=split_count)
     fold_mae: list[float] = []
     x_all = ordered[feature_columns]
-    baseline_all = ordered["local_price"].to_numpy(dtype=float)
     y_all = ordered[TARGET_COLUMN].to_numpy(dtype=float)
-    delta_all = y_all - baseline_all
+    baseline_all = (
+        ordered[baseline_column].to_numpy(dtype=float)
+        if baseline_column is not None
+        else np.zeros(len(ordered), dtype=float)
+    )
+    train_target = y_all - baseline_all if baseline_column is not None else y_all
     for train_idx, val_idx in splitter.split(x_all):
         model = lgb.LGBMRegressor(
             **_build_params(
@@ -85,10 +90,8 @@ def _time_series_cv_mae(
                 lambda_l2=lambda_l2,
             )
         )
-        model.fit(x_all.iloc[train_idx], delta_all[train_idx])
-        fold_pred = (
-            model.predict(x_all.iloc[val_idx]) + baseline_all[val_idx]
-        )
+        model.fit(x_all.iloc[train_idx], train_target[train_idx])
+        fold_pred = model.predict(x_all.iloc[val_idx]) + baseline_all[val_idx]
         fold_mae.append(mae(y_all[val_idx], fold_pred))
     return fold_mae, float(np.mean(fold_mae)), float(np.std(fold_mae))
 
@@ -126,18 +129,33 @@ def train_lightgbm_models(
     lambda_l2: float,
     early_stopping_rounds: int,
     cv_splits: int,
+    baseline_column: str | None = "local_price",
+    model_name: str = "lightgbm",
+    prediction_filename: str = "lgbm_predictions.csv",
 ) -> LgbmResult:
     x_train = train_df[feature_columns]
-    train_baseline = train_df["local_price"].to_numpy(dtype=float)
     y_train = train_df[TARGET_COLUMN].to_numpy(dtype=float)
-    y_train_delta = y_train - train_baseline
     x_val = val_df[feature_columns]
-    val_baseline = val_df["local_price"].to_numpy(dtype=float)
     y_val = val_df[TARGET_COLUMN].to_numpy(dtype=float)
-    y_val_delta = y_val - val_baseline
     x_test = test_df[feature_columns]
-    test_baseline = test_df["local_price"].to_numpy(dtype=float)
     y_test = test_df[TARGET_COLUMN].to_numpy(dtype=float)
+    train_baseline = (
+        train_df[baseline_column].to_numpy(dtype=float)
+        if baseline_column is not None
+        else np.zeros(len(train_df), dtype=float)
+    )
+    val_baseline = (
+        val_df[baseline_column].to_numpy(dtype=float)
+        if baseline_column is not None
+        else np.zeros(len(val_df), dtype=float)
+    )
+    test_baseline = (
+        test_df[baseline_column].to_numpy(dtype=float)
+        if baseline_column is not None
+        else np.zeros(len(test_df), dtype=float)
+    )
+    y_train_fit = y_train - train_baseline if baseline_column is not None else y_train
+    y_val_fit = y_val - val_baseline if baseline_column is not None else y_val
 
     model_output_dir.mkdir(parents=True, exist_ok=True)
     prediction_output_dir.mkdir(parents=True, exist_ok=True)
@@ -156,8 +174,8 @@ def train_lightgbm_models(
     )
     point_model.fit(
         x_train,
-        y_train_delta,
-        eval_set=[(x_val, y_val_delta)],
+        y_train_fit,
+        eval_set=[(x_val, y_val_fit)],
         eval_metric="l2",
         callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
     )
@@ -197,15 +215,15 @@ def train_lightgbm_models(
         )
         lower_model.fit(
             x_train,
-            y_train_delta,
-            eval_set=[(x_val, y_val_delta)],
+            y_train_fit,
+            eval_set=[(x_val, y_val_fit)],
             eval_metric="quantile",
             callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
         )
         upper_model.fit(
             x_train,
-            y_train_delta,
-            eval_set=[(x_val, y_val_delta)],
+            y_train_fit,
+            eval_set=[(x_val, y_val_fit)],
             eval_metric="quantile",
             callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
         )
@@ -226,6 +244,7 @@ def train_lightgbm_models(
     fold_mae, cv_mae_mean, cv_mae_std = _time_series_cv_mae(
         cv_frame,
         feature_columns=feature_columns,
+        baseline_column=baseline_column,
         learning_rate=learning_rate,
         n_estimators=n_estimators,
         max_depth=max_depth,
@@ -246,11 +265,11 @@ def train_lightgbm_models(
             "y_pred_p90": pred_upper,
         }
     )
-    prediction_path = prediction_output_dir / "lgbm_predictions.csv"
+    prediction_path = prediction_output_dir / prediction_filename
     pred_frame.to_csv(prediction_path, index=False)
 
     metrics: dict[str, float | int | str] = {
-        "model": "lightgbm",
+        "model": model_name,
         "test_mae": mae(y_test, pred_point),
         "test_rmse": rmse(y_test, pred_point),
         "test_mape": mape(y_test, pred_point),

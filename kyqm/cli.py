@@ -8,8 +8,10 @@ from .config import KyqmConfig, load_config
 from .feature_engineering import (
     CORE_RECURRENT_COLUMNS,
     build_feature_table,
+    build_long_horizon_feature_table,
     feature_columns,
     lgbm_feature_columns,
+    long_feature_columns,
     split_by_time,
 )
 from .metrics import baseline_metrics, prediction_preview
@@ -17,6 +19,7 @@ from .model_gru import train_gru_model
 from .model_lgb import train_lightgbm_models
 from .model_lstm import train_lstm_model
 from .model_prophet import add_prophet_seasonal_features, train_prophet_model
+from .model_ridge import train_ridge_model
 from .prepare import PrepareParams, prepare_training_frame
 
 
@@ -31,9 +34,16 @@ def parse_args() -> argparse.Namespace:
         help="Path to kyqm config TOML.",
     )
     parser.add_argument(
+        "--pipeline",
+        type=str,
+        choices=["short", "long"],
+        default=None,
+        help="Run the existing short-horizon pipeline or the long-horizon comparison path.",
+    )
+    parser.add_argument(
         "--model",
         type=str,
-        choices=["all", "lgbm", "gru", "lstm", "prophet"],
+        choices=["all", "lgbm", "gru", "lstm", "prophet", "ridge"],
         default=None,
         help="Run specific model path.",
     )
@@ -61,6 +71,7 @@ def parse_args() -> argparse.Namespace:
 def _apply_overrides(
     cfg: KyqmConfig,
     *,
+    pipeline: str | None,
     model: str | None,
     epochs: int | None,
     batch_size: int | None,
@@ -71,6 +82,7 @@ def _apply_overrides(
         data=cfg.data,
         lgbm=cfg.lgbm,
         prophet=cfg.prophet,
+        long=cfg.long,
         lstm=cfg.lstm.__class__(
             enabled=cfg.lstm.enabled,
             sequence_length=cfg.lstm.sequence_length,
@@ -89,6 +101,7 @@ def _apply_overrides(
         ),
         run=cfg.run.__class__(
             model=model or cfg.run.model,
+            pipeline=pipeline or cfg.run.pipeline,
             seed=cfg.run.seed,
             summary_output_path=cfg.run.summary_output_path,
             prediction_output_dir=cfg.run.prediction_output_dir,
@@ -113,25 +126,8 @@ def _apply_overrides(
     )
 
 
-def run(
-    config_path: Path,
-    *,
-    model: str | None,
-    epochs: int | None,
-    batch_size: int | None,
-    learning_rate: float | None,
-    device: str | None,
-) -> dict[str, dict[str, float | int | str]]:
-    cfg = _apply_overrides(
-        load_config(config_path),
-        model=model,
-        epochs=epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        device=device,
-    )
-
-    cleaned = prepare_training_frame(
+def _prepare_cleaned(cfg: KyqmConfig):
+    return prepare_training_frame(
         PrepareParams(
             market_prices_path=cfg.data.market_prices_path,
             weather_path=cfg.data.weather_path,
@@ -147,9 +143,10 @@ def run(
             outlier_sigma=cfg.data.outlier_sigma,
         )
     )
-    feature_df = build_feature_table(
-        cleaned, forecast_horizon=cfg.data.forecast_horizon
-    )
+
+
+def _run_short_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | int | str]]:
+    feature_df = build_feature_table(cleaned, forecast_horizon=cfg.data.forecast_horizon)
     if cfg.lgbm.use_prophet_components:
         feature_df = add_prophet_seasonal_features(
             feature_df,
@@ -166,7 +163,6 @@ def run(
         val_end=cfg.data.val_end,
         test_end=cfg.data.test_end,
     )
-    feature_cols = feature_columns(feature_df)
     lightgbm_feature_cols = lgbm_feature_columns(
         feature_df,
         include_beijing=cfg.lgbm.use_beijing_lead_features,
@@ -292,10 +288,202 @@ def run(
     return summary
 
 
+def _run_long_pipeline(cfg: KyqmConfig, cleaned) -> dict[str, dict[str, float | int | str]]:
+    long_df = build_long_horizon_feature_table(
+        cleaned,
+        horizons=cfg.long.horizons,
+        history_window_days=cfg.long.history_window_days,
+        anchor_step_days=cfg.long.anchor_step_days,
+        train_end=cfg.data.train_end,
+        augmentation_enabled=cfg.long.augmentation_enabled,
+        augmentation_jitter_days=cfg.long.augmentation_jitter_days,
+    )
+    cfg.long.feature_output_path.parent.mkdir(parents=True, exist_ok=True)
+    long_df.to_csv(cfg.long.feature_output_path, index=False)
+
+    summary: dict[str, dict[str, float | int | str]] = {}
+    comparison_rows: list[dict[str, float | int | str]] = []
+    run_model = cfg.run.model
+    prediction_dir = cfg.long.prediction_output_dir
+    prediction_dir.mkdir(parents=True, exist_ok=True)
+
+    short_summary = _run_short_pipeline(cfg, cleaned)
+    if "naive_last_price" in short_summary:
+        baseline_mae_1d = float(short_summary["naive_last_price"]["test_mae"])
+        comparison_rows.append(
+            {
+                "horizon_days": 1,
+                "model": "naive_last_price",
+                "baseline_name": "current_price",
+                "test_mae": baseline_mae_1d,
+                "baseline_mae": baseline_mae_1d,
+                "mae_ratio": 1.0,
+            }
+        )
+        summary["naive_1d"] = short_summary["naive_last_price"]
+    if "lightgbm" in short_summary:
+        ratio_1d = float(short_summary["lightgbm"]["test_mae"]) / baseline_mae_1d
+        comparison_rows.append(
+            {
+                "horizon_days": 1,
+                "model": "lightgbm_1d",
+                "baseline_name": "current_price",
+                "test_mae": float(short_summary["lightgbm"]["test_mae"]),
+                "baseline_mae": baseline_mae_1d,
+                "mae_ratio": ratio_1d,
+            }
+        )
+        summary["lightgbm_1d"] = short_summary["lightgbm"]
+
+    for horizon_days in cfg.long.horizons:
+        horizon_df = long_df[long_df["horizon_days"] == horizon_days].copy()
+        splits = split_by_time(
+            horizon_df,
+            train_end=cfg.data.train_end,
+            val_end=cfg.data.val_end,
+            test_end=cfg.data.test_end,
+        )
+        features = long_feature_columns(horizon_df)
+        baseline_true = splits.test["target"].to_numpy(dtype=float)
+        baseline_pred = splits.test["selected_baseline"].to_numpy(dtype=float)
+        baseline_name = str(splits.test["selected_baseline_name"].mode().iloc[0])
+        baseline_key = f"naive_{horizon_days}d"
+        baseline_metrics_row = {
+            "model": baseline_key,
+            "baseline_name": baseline_name,
+            **baseline_metrics(baseline_true, baseline_pred),
+            "prediction_preview": prediction_preview(
+                splits.test["target_date"].dt.strftime("%Y-%m-%d"),
+                baseline_true,
+                baseline_pred,
+            ),
+        }
+        summary[baseline_key] = baseline_metrics_row
+        baseline_mae = float(baseline_metrics_row["test_mae"])
+        comparison_rows.append(
+            {
+                "horizon_days": horizon_days,
+                "model": baseline_key,
+                "baseline_name": baseline_name,
+                "test_mae": baseline_mae,
+                "baseline_mae": baseline_mae,
+                "mae_ratio": 1.0,
+            }
+        )
+
+        if run_model in {"all", "lgbm"} and cfg.lgbm.enabled:
+            lgbm_result = train_lightgbm_models(
+                train_df=splits.train,
+                val_df=splits.val,
+                test_df=splits.test,
+                feature_columns=features,
+                model_output_dir=cfg.long.lgbm_model_output_dir / f"h{horizon_days}",
+                prediction_output_dir=prediction_dir / f"h{horizon_days}",
+                baseline_column=None,
+                model_name=f"lightgbm_{horizon_days}d",
+                prediction_filename=f"lgbm_{horizon_days}d_predictions.csv",
+                quantiles_enabled=cfg.lgbm.quantiles_enabled,
+                lower_alpha=cfg.lgbm.lower_alpha,
+                upper_alpha=cfg.lgbm.upper_alpha,
+                learning_rate=cfg.lgbm.learning_rate,
+                n_estimators=cfg.lgbm.n_estimators,
+                max_depth=cfg.lgbm.max_depth,
+                num_leaves=cfg.lgbm.num_leaves,
+                min_data_in_leaf=cfg.lgbm.min_data_in_leaf,
+                lambda_l1=cfg.lgbm.lambda_l1,
+                lambda_l2=cfg.lgbm.lambda_l2,
+                early_stopping_rounds=cfg.lgbm.early_stopping_rounds,
+                cv_splits=cfg.lgbm.cv_splits,
+            )
+            summary[f"lightgbm_{horizon_days}d"] = lgbm_result.metrics
+            comparison_rows.append(
+                {
+                    "horizon_days": horizon_days,
+                    "model": f"lightgbm_{horizon_days}d",
+                    "baseline_name": baseline_name,
+                    "test_mae": float(lgbm_result.metrics["test_mae"]),
+                    "baseline_mae": baseline_mae,
+                    "mae_ratio": float(lgbm_result.metrics["test_mae"]) / baseline_mae,
+                }
+            )
+
+        if run_model in {"all", "ridge"}:
+            ridge_result = train_ridge_model(
+                train_df=splits.train,
+                val_df=splits.val,
+                test_df=splits.test,
+                feature_columns=features,
+                model_output_dir=cfg.long.ridge_model_output_dir / f"h{horizon_days}",
+                prediction_output_dir=prediction_dir / f"h{horizon_days}",
+                baseline_column=None,
+                model_name=f"ridge_{horizon_days}d",
+                prediction_filename=f"ridge_{horizon_days}d_predictions.csv",
+            )
+            summary[f"ridge_{horizon_days}d"] = ridge_result.metrics
+            comparison_rows.append(
+                {
+                    "horizon_days": horizon_days,
+                    "model": f"ridge_{horizon_days}d",
+                    "baseline_name": baseline_name,
+                    "test_mae": float(ridge_result.metrics["test_mae"]),
+                    "baseline_mae": baseline_mae,
+                    "mae_ratio": float(ridge_result.metrics["test_mae"]) / baseline_mae,
+                }
+            )
+
+    cfg.long.summary_output_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.long.summary_output_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    import pandas as pd
+
+    comparison_frame = pd.DataFrame(comparison_rows).sort_values(
+        ["horizon_days", "model"]
+    )
+    comparison_frame.to_csv(cfg.long.comparison_output_path, index=False)
+
+    print(f"Saved long feature table to: {cfg.long.feature_output_path}")
+    print(f"Saved long model summary to: {cfg.long.summary_output_path}")
+    print(f"Saved long comparison table to: {cfg.long.comparison_output_path}")
+    for name, metrics in summary.items():
+        if "test_mae" in metrics:
+            print(
+                f"{name}: MAE={metrics.get('test_mae', float('nan')):.4f}, RMSE={metrics.get('test_rmse', float('nan')):.4f}"
+            )
+    return summary
+
+
+def run(
+    config_path: Path,
+    *,
+    pipeline: str | None,
+    model: str | None,
+    epochs: int | None,
+    batch_size: int | None,
+    learning_rate: float | None,
+    device: str | None,
+) -> dict[str, dict[str, float | int | str]]:
+    cfg = _apply_overrides(
+        load_config(config_path),
+        pipeline=pipeline,
+        model=model,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        device=device,
+    )
+
+    cleaned = _prepare_cleaned(cfg)
+    if cfg.run.pipeline == "long":
+        return _run_long_pipeline(cfg, cleaned)
+    return _run_short_pipeline(cfg, cleaned)
+
+
 def main() -> None:
     args = parse_args()
     run(
         args.config,
+        pipeline=args.pipeline,
         model=args.model,
         epochs=args.epochs,
         batch_size=args.batch_size,
