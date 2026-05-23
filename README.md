@@ -95,6 +95,8 @@ Province and city filtering for market data now use `cpca` parsing from both `ma
 
 `kyqm` now trains on an explicit **1-day-ahead** target by default (`forecast_horizon = 1`). The model summary also includes a `naive_last_price` baseline for comparison.
 
+The prepared daily table can still include companion-product, nearby-province, holiday, and 4-city-average weather signals, but the default LightGBM path is intentionally conservative: it learns a **residual over the naive last-price baseline** from the local autoregressive features (`lag_*`, `roll_*`, `price_diff_*`). That was the most stable setup on the current small sample.
+
 Run all models:
 
 ```bash
