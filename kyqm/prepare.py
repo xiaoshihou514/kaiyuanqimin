@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import warnings
 
-import cpca
 import pandas as pd
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message="pkg_resources is deprecated as an API.*",
+        category=UserWarning,
+    )
+    import cpca
 
 FEATURE_COLUMNS = ["local_price", "temp_avg", "precip", "sentiment_score"]
 DIRECT_ADMIN_CITIES = {"北京", "天津", "上海", "重庆", "香港", "澳门"}

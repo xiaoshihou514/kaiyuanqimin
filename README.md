@@ -166,6 +166,15 @@ Main long-horizon outputs:
 - `data/models/long/lgbm/**`
 - `data/models/long/ridge/**`
 
+Launch the Streamlit long-horizon app after generating those artifacts:
+
+```bash
+uv run streamlit run app.py
+```
+
+The Streamlit app is the primary visualization path for long-horizon analysis and now focuses only on:
+- **Actual vs prediction**: dark-mode per-horizon test-set traces for `7d / 30d / 90d`, covering both LightGBM and Ridge across multiple held-out evaluation samples
+
 Current validated long-horizon outcome on the repo data:
 - `1d`: LightGBM is still effectively tied with / slightly worse than naive
 - `7d`: models still do not beat the current-price naive baseline
