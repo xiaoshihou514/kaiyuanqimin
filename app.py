@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
+import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
@@ -16,11 +18,32 @@ FIGURE_BG = "#0f172a"
 AXIS_BG = "#111827"
 GRID_COLOR = "#334155"
 TEXT_COLOR = "#e5e7eb"
+CJK_FONT_CANDIDATES = [
+    "Noto Sans CJK SC",
+    "Microsoft YaHei",
+    "Source Han Serif CN",
+    "SimSun",
+    "Droid Sans Fallback",
+]
+
+
+def _prediction_artifact_paths(config_path: Path) -> list[Path]:
+    cfg = load_config(config_path)
+    paths: list[Path] = []
+    for horizon_days in cfg.long.horizons:
+        for filename_prefix in ("lgbm", "ridge"):
+            paths.append(
+                cfg.long.prediction_output_dir
+                / f"h{horizon_days}"
+                / f"{filename_prefix}_{horizon_days}d_predictions.csv"
+            )
+    return paths
 
 
 @st.cache_data(show_spinner=False)
 def _load_long_predictions(
     config_path: Path,
+    _data_version: tuple[tuple[str, float | None], ...],
 ) -> tuple[dict[int, dict[str, pd.DataFrame]], list[str]]:
     cfg = load_config(config_path)
     predictions: dict[int, dict[str, pd.DataFrame]] = {}
@@ -52,7 +75,7 @@ def _load_long_predictions(
 
 
 def _render_missing_artifacts() -> None:
-    st.error("Long-horizon prediction artifacts are missing.")
+    st.error("缺少长期预测结果文件。")
     st.code("uv run python -m kyqm --pipeline long --model all", language="bash")
     st.stop()
 
@@ -77,6 +100,35 @@ def _apply_dark_mode() -> None:
     )
 
 
+def _resolve_font_path(font_name: str) -> Path | None:
+    try:
+        output = subprocess.check_output(
+            ["fc-match", "-f", "%{file}\n", font_name],
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    if not output:
+        return None
+    path = Path(output)
+    return path if path.exists() else None
+
+
+@st.cache_resource
+def _configure_matplotlib_fonts() -> str | None:
+    for font_name in CJK_FONT_CANDIDATES:
+        font_path = _resolve_font_path(font_name)
+        if font_path is None:
+            continue
+        fm.fontManager.addfont(font_path)
+        resolved_font_name = fm.FontProperties(fname=font_path).get_name()
+        plt.rcParams["font.family"] = "sans-serif"
+        plt.rcParams["font.sans-serif"] = [resolved_font_name, "DejaVu Sans"]
+        plt.rcParams["axes.unicode_minus"] = False
+        return resolved_font_name
+    return None
+
+
 def _prediction_chart(
     predictions: dict[int, dict[str, pd.DataFrame]],
     *,
@@ -86,12 +138,13 @@ def _prediction_chart(
     fig, axes = plt.subplots(
         len(selected_horizons),
         1,
-        figsize=(10, max(3.6 * len(selected_horizons), 4)),
+        figsize=(10, max(3.8 * len(selected_horizons), 4)),
         sharex=False,
     )
     if len(selected_horizons) == 1:
         axes = [axes]
     fig.patch.set_facecolor(FIGURE_BG)
+
     for ax, horizon_days in zip(axes, selected_horizons, strict=True):
         ax.set_facecolor(AXIS_BG)
         horizon_predictions = predictions.get(horizon_days, {})
@@ -101,9 +154,20 @@ def _prediction_chart(
                 actual_frame["date"],
                 actual_frame["y_true"],
                 color="#f8fafc",
-                linewidth=2,
-                label="Actual",
+                linewidth=2.2,
+                label="实际值",
             )
+            test_rows = actual_frame[actual_frame["split"] == "test"]
+            if not test_rows.empty:
+                boundary_date = test_rows["date"].min()
+                ax.axvline(
+                    boundary_date,
+                    color="#94a3b8",
+                    linestyle="--",
+                    linewidth=1.2,
+                    label="验证/测试分界",
+                )
+
         plotted = actual_frame is not None
         for model_name in selected_models:
             frame = horizon_predictions.get(model_name)
@@ -126,18 +190,20 @@ def _prediction_chart(
                     label=f"{MODEL_LABELS[model_name]} P10-P90",
                 )
             plotted = True
+
         if not plotted:
             ax.text(
                 0.5,
                 0.5,
-                f"No prediction files available for {horizon_days}d",
+                f"{horizon_days}天预测缺少结果文件",
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
                 color=TEXT_COLOR,
             )
-        ax.set_title(f"Actual vs prediction ({horizon_days}d horizon)", color=TEXT_COLOR)
-        ax.set_ylabel("Price", color=TEXT_COLOR)
+
+        ax.set_title(f"{horizon_days}天预测：验证集 + 测试集", color=TEXT_COLOR)
+        ax.set_ylabel("价格", color=TEXT_COLOR)
         ax.grid(alpha=0.35, color=GRID_COLOR)
         ax.tick_params(colors=TEXT_COLOR)
         ax.xaxis.label.set_color(TEXT_COLOR)
@@ -147,50 +213,59 @@ def _prediction_chart(
         legend = ax.legend(facecolor=AXIS_BG, edgecolor=GRID_COLOR)
         for text in legend.get_texts():
             text.set_color(TEXT_COLOR)
-    axes[-1].set_xlabel("Target date", color=TEXT_COLOR)
+
+    axes[-1].set_xlabel("目标日期", color=TEXT_COLOR)
     fig.tight_layout()
     return fig
 
 
 def main() -> None:
     st.set_page_config(
-        page_title="Kaiyuanqimin Long-Horizon Predictions",
+        page_title="开源启民长期预测",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     _apply_dark_mode()
-    st.title("Kaiyuanqimin long-horizon predictions")
-    st.caption(
-        "Dark-mode view of actual vs predicted prices across multiple held-out long-horizon evaluation samples."
-    )
+    selected_font = _configure_matplotlib_fonts()
+    st.title("开源启民长期预测结果")
+    st.caption("展示 7/30/90 天长期预测在完整评估集（验证集 + 测试集）上的实际值与预测值。")
 
     config_path = CONFIG_PATH
     if not config_path.exists():
-        st.error(f"Config file not found: {config_path}")
+        st.error(f"未找到配置文件：{config_path}")
         st.stop()
 
     cfg = load_config(config_path)
     if not cfg.long.prediction_output_dir.exists():
         _render_missing_artifacts()
 
-    predictions, missing_prediction_paths = _load_long_predictions(config_path)
+    artifact_paths = _prediction_artifact_paths(config_path)
+    data_version = tuple(
+        (str(path), path.stat().st_mtime if path.exists() else None) for path in artifact_paths
+    )
+    predictions, missing_prediction_paths = _load_long_predictions(
+        config_path,
+        data_version,
+    )
     if not predictions:
         _render_missing_artifacts()
 
-    st.sidebar.header("Artifact source")
-    st.sidebar.write(f"Predictions: `{cfg.long.prediction_output_dir}`")
+    st.sidebar.header("结果文件")
+    st.sidebar.write(f"预测目录：`{cfg.long.prediction_output_dir}`")
+    if selected_font is not None:
+        st.sidebar.write(f"绘图字体：`{selected_font}`")
     st.sidebar.code("uv run python -m kyqm --pipeline long --model all", language="bash")
     if missing_prediction_paths:
         st.sidebar.caption(
-            f"Missing prediction files: {len(missing_prediction_paths)} expected path(s) were not found."
+            f"缺少 {len(missing_prediction_paths)} 个预测文件，请重新生成长期预测结果。"
         )
 
     horizon_choices = [horizon for horizon in cfg.long.horizons if horizon in predictions]
     selected_horizons = st.sidebar.multiselect(
-        "Show horizons",
+        "显示预测周期",
         options=horizon_choices,
         default=horizon_choices,
-        format_func=lambda value: f"{value}d",
+        format_func=lambda value: f"{value}天",
     )
     available_prediction_models = [
         model_name
@@ -198,17 +273,29 @@ def main() -> None:
         if any(model_name in horizon_predictions for horizon_predictions in predictions.values())
     ]
     selected_prediction_models = st.sidebar.multiselect(
-        "Prediction traces",
+        "显示模型",
         options=available_prediction_models,
         default=available_prediction_models,
         format_func=lambda value: MODEL_LABELS[value],
     )
 
-    st.subheader("Actual vs prediction on the long-horizon evaluation set")
+    summary_cols = st.columns(len(horizon_choices))
+    for col, horizon_days in zip(summary_cols, horizon_choices, strict=True):
+        horizon_frame = next(iter(predictions[horizon_days].values()))
+        split_counts = horizon_frame["split"].value_counts()
+        val_count = int(split_counts.get("val", 0))
+        test_count = int(split_counts.get("test", 0))
+        col.metric(
+            label=f"{horizon_days}天样本数",
+            value=len(horizon_frame),
+            delta=f"验证 {val_count} / 测试 {test_count}",
+        )
+
+    st.subheader("长期预测：实际值 vs 预测值")
     if not selected_horizons:
-        st.info("Select at least one horizon in the sidebar.")
+        st.info("请在侧边栏中至少选择一个预测周期。")
     elif not selected_prediction_models:
-        st.info("Select at least one prediction trace in the sidebar.")
+        st.info("请在侧边栏中至少选择一个模型。")
     else:
         st.pyplot(
             _prediction_chart(
@@ -219,10 +306,10 @@ def main() -> None:
             width="stretch",
         )
         st.markdown(
-            "Each subplot shows multiple held-out test samples for one long horizon; the shaded band is the LightGBM `P10-P90` interval when available."
+            "每个子图对应一个预测周期，覆盖完整评估集；虚线表示**验证集**与**测试集**的分界，阴影带表示 LightGBM 的 `P10-P90` 区间。"
         )
 
-    st.sidebar.caption("This app only shows long-term prediction vs actual traces.")
+    st.sidebar.caption("当前页面仅展示长期预测在完整评估集上的结果。")
 
 
 if __name__ == "__main__":

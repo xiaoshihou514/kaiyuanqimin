@@ -179,10 +179,13 @@ def train_lightgbm_models(
         eval_metric="l2",
         callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
     )
-    pred_point = point_model.predict(x_test) + test_baseline
+    pred_val_point = point_model.predict(x_val) + val_baseline
+    pred_test_point = point_model.predict(x_test) + test_baseline
 
-    pred_lower = np.full_like(pred_point, np.nan, dtype=float)
-    pred_upper = np.full_like(pred_point, np.nan, dtype=float)
+    pred_val_lower = np.full(len(val_df), np.nan, dtype=float)
+    pred_val_upper = np.full(len(val_df), np.nan, dtype=float)
+    pred_test_lower = np.full(len(test_df), np.nan, dtype=float)
+    pred_test_upper = np.full(len(test_df), np.nan, dtype=float)
     lower_model = None
     upper_model = None
 
@@ -227,8 +230,10 @@ def train_lightgbm_models(
             eval_metric="quantile",
             callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
         )
-        pred_lower = lower_model.predict(x_test) + test_baseline
-        pred_upper = upper_model.predict(x_test) + test_baseline
+        pred_val_lower = lower_model.predict(x_val) + val_baseline
+        pred_val_upper = upper_model.predict(x_val) + val_baseline
+        pred_test_lower = lower_model.predict(x_test) + test_baseline
+        pred_test_upper = upper_model.predict(x_test) + test_baseline
 
     with (model_output_dir / "point_model.pkl").open("wb") as f:
         pickle.dump(point_model, f)
@@ -255,33 +260,54 @@ def train_lightgbm_models(
         cv_splits=cv_splits,
     )
 
-    prediction_dates = test_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d")
-    pred_frame = pd.DataFrame(
-        {
-            "date": prediction_dates,
-            "y_true": y_test,
-            "y_pred": pred_point,
-            "y_pred_p10": pred_lower,
-            "y_pred_p90": pred_upper,
-        }
+    val_prediction_dates = val_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d")
+    test_prediction_dates = test_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d")
+    pred_frame = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "date": val_prediction_dates,
+                    "split": "val",
+                    "y_true": y_val,
+                    "y_pred": pred_val_point,
+                    "y_pred_p10": pred_val_lower,
+                    "y_pred_p90": pred_val_upper,
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "date": test_prediction_dates,
+                    "split": "test",
+                    "y_true": y_test,
+                    "y_pred": pred_test_point,
+                    "y_pred_p10": pred_test_lower,
+                    "y_pred_p90": pred_test_upper,
+                }
+            ),
+        ],
+        ignore_index=True,
     )
     prediction_path = prediction_output_dir / prediction_filename
     pred_frame.to_csv(prediction_path, index=False)
 
     metrics: dict[str, float | int | str] = {
         "model": model_name,
-        "test_mae": mae(y_test, pred_point),
-        "test_rmse": rmse(y_test, pred_point),
-        "test_mape": mape(y_test, pred_point),
-        "test_smape": smape(y_test, pred_point),
+        "test_mae": mae(y_test, pred_test_point),
+        "test_rmse": rmse(y_test, pred_test_point),
+        "test_mape": mape(y_test, pred_test_point),
+        "test_smape": smape(y_test, pred_test_point),
         "cv_mae_mean": cv_mae_mean,
         "cv_mae_std": cv_mae_std,
         "cv_fold_mae": fold_mae,
-        "prediction_preview": prediction_preview(prediction_dates, y_test, pred_point),
+        "prediction_preview": prediction_preview(
+            test_prediction_dates, y_test, pred_test_point
+        ),
     }
     if quantiles_enabled:
-        metrics["test_picp"] = picp(y_test, pred_lower, pred_upper)
-        metrics["test_interval_width"] = interval_mean_width(pred_lower, pred_upper)
+        metrics["test_picp"] = picp(y_test, pred_test_lower, pred_test_upper)
+        metrics["test_interval_width"] = interval_mean_width(
+            pred_test_lower, pred_test_upper
+        )
 
     (model_output_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2),
