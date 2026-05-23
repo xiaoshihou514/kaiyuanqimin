@@ -76,7 +76,22 @@ weekly_seasonality = true
 yearly_seasonality = true
 model_output_path = "data/models/prophet/model.pkl"
 
+[long]
+enabled = true
+horizons = [7, 30, 90]
+history_window_days = 90
+anchor_step_days = 7
+augmentation_enabled = true
+augmentation_jitter_days = 3
+feature_output_path = "data/feature_data_long.csv"
+summary_output_path = "data/model_summary_long.json"
+comparison_output_path = "data/model_comparison_long.csv"
+prediction_output_dir = "data/predictions/long"
+ridge_model_output_dir = "data/models/long/ridge"
+lgbm_model_output_dir = "data/models/long/lgbm"
+
 [run]
+pipeline = "short"
 model = "all"
 seed = 42
 summary_output_path = "data/model_summary.json"

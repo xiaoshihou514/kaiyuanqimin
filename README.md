@@ -143,3 +143,31 @@ Main outputs:
 - `data/predictions/*.csv` (per-model predictions)
 - `data/model_summary.json` (cross-model metrics summary, including `naive_last_price`)
 - `data/models/lgbm/*`, `data/models/gru/*`, `data/models/lstm/*`, `data/models/prophet/*`
+
+### Long-horizon comparison path
+
+Use the separate long-horizon pipeline to compare `1d / 7d / 30d / 90d` behavior:
+
+```bash
+uv run python -m kyqm --pipeline long --model all
+```
+
+This path keeps the existing 1-day builder intact and adds:
+- weekly anchor samples with a 90-day history window
+- training-only `±3 day` anchor jitter augmentation
+- long-horizon LightGBM + Ridge comparisons
+- horizon-aware naive baselines (`current_price` for 7d, `seasonal_last_year` for 30d/90d)
+
+Main long-horizon outputs:
+- `data/feature_data_long.csv`
+- `data/model_summary_long.json`
+- `data/model_comparison_long.csv`
+- `data/predictions/long/**`
+- `data/models/long/lgbm/**`
+- `data/models/long/ridge/**`
+
+Current validated long-horizon outcome on the repo data:
+- `1d`: LightGBM is still effectively tied with / slightly worse than naive
+- `7d`: models still do not beat the current-price naive baseline
+- `30d`: LightGBM and Ridge both beat the seasonal naive baseline, with LightGBM stronger
+- `90d`: both still beat the seasonal naive baseline, again with LightGBM stronger
