@@ -182,6 +182,41 @@ def _selected_prediction_chart(
                 alpha=0.18,
                 label="预测区间 P10-P90",
             )
+        if "high_risk_flag" in frame.columns:
+            high_risk_rows = frame[frame["high_risk_flag"] == 1]
+            if not high_risk_rows.empty:
+                ax.scatter(
+                    high_risk_rows["date"],
+                    high_risk_rows["y_pred"],
+                    color="#f59e0b",
+                    s=28,
+                    label="高风险期",
+                    zorder=4,
+                )
+        if "sell_alert_flag" in frame.columns:
+            sell_rows = frame[frame["sell_alert_flag"] == 1]
+            if not sell_rows.empty:
+                ax.scatter(
+                    sell_rows["date"],
+                    sell_rows["y_pred_p90"] if "y_pred_p90" in sell_rows.columns else sell_rows["y_pred"],
+                    color="#22c55e",
+                    s=24,
+                    marker="^",
+                    label="卖出预警",
+                    zorder=5,
+                )
+        if "hedge_alert_flag" in frame.columns:
+            hedge_rows = frame[frame["hedge_alert_flag"] == 1]
+            if not hedge_rows.empty:
+                ax.scatter(
+                    hedge_rows["date"],
+                    hedge_rows["y_pred_p10"] if "y_pred_p10" in hedge_rows.columns else hedge_rows["y_pred"],
+                    color="#ef4444",
+                    s=24,
+                    marker="v",
+                    label="避险预警",
+                    zorder=5,
+                )
 
         test_rows = frame[frame["split"] == "test"]
         if not test_rows.empty:
@@ -225,19 +260,91 @@ def _format_candidate_table(candidates: pd.DataFrame, horizon_days: int) -> pd.D
     optional = [
         ("best_shift_days", "平移天数"),
         ("lightgbm_weight", "LightGBM权重"),
+        ("weight_scheme", "加权方案"),
         ("bias", "偏差校准"),
         ("low_vol_weight", "低波动权重"),
         ("mid_vol_weight", "中波动权重"),
         ("high_vol_weight", "高波动权重"),
         ("blend_source", "混合主模型"),
+        ("residual_threshold", "残差阈值"),
+        ("residual_correction_rate", "残差触发占比"),
+        ("selection_penalty", "选择惩罚"),
         ("test_picp", "测试覆盖率"),
         ("test_interval_width", "测试区间宽度"),
     ]
     for source, label in optional:
         if source in subset.columns and subset[source].notna().any():
-            subset[label] = subset[source].round(4)
+            subset[label] = subset[source] if subset[source].dtype == object else subset[source].round(4)
             keep.append(label)
     return subset[keep]
+
+
+def _risk_summary_table(
+    selected_predictions: dict[int, pd.DataFrame],
+    selection_map: dict[int, str],
+) -> pd.DataFrame:
+    rows: list[dict[str, float | str]] = []
+    for horizon_days, frame in selected_predictions.items():
+        if "high_risk_flag" not in frame.columns:
+            continue
+        test_frame = frame[frame["split"] == "test"].copy()
+        if test_frame.empty:
+            continue
+        interval_ratio = (
+            float(test_frame["interval_width_ratio"].mean())
+            if "interval_width_ratio" in test_frame.columns
+            else float("nan")
+        )
+        rows.append(
+            {
+                "预测周期": f"{horizon_days}天",
+                "最终方案": selection_map.get(horizon_days, "selected"),
+                "高风险占比": float(test_frame["high_risk_flag"].mean()),
+                "卖出预警占比": float(
+                    (test_frame["sell_alert_flag"] if "sell_alert_flag" in test_frame.columns else pd.Series(0, index=test_frame.index)).mean()
+                ),
+                "避险预警占比": float(
+                    (test_frame["hedge_alert_flag"] if "hedge_alert_flag" in test_frame.columns else pd.Series(0, index=test_frame.index)).mean()
+                ),
+                "平均区间宽度比": interval_ratio,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _risk_event_table(frame: pd.DataFrame) -> pd.DataFrame:
+    if not {"high_risk_flag", "sell_alert_flag", "hedge_alert_flag"}.intersection(frame.columns):
+        return pd.DataFrame()
+    event_mask = pd.Series(False, index=frame.index)
+    for column in ("high_risk_flag", "sell_alert_flag", "hedge_alert_flag"):
+        if column in frame.columns:
+            event_mask = event_mask | (frame[column].astype(int) == 1)
+    events = frame.loc[event_mask].copy()
+    if events.empty:
+        return events
+    events["日期"] = pd.to_datetime(events["date"]).dt.strftime("%Y-%m-%d")
+    events["集合"] = events["split"].map({"val": "验证", "test": "测试"}).fillna(events["split"])
+    events["实际值"] = events["y_true"].round(4)
+    events["预测值"] = events["y_pred"].round(4)
+    if "y_pred_p10" in events.columns:
+        events["P10"] = events["y_pred_p10"].round(4)
+    if "y_pred_p90" in events.columns:
+        events["P90"] = events["y_pred_p90"].round(4)
+    if "interval_width_ratio" in events.columns:
+        events["区间宽度比"] = events["interval_width_ratio"].round(3)
+    for source, label in (
+        ("high_risk_flag", "高风险"),
+        ("sell_alert_flag", "卖出预警"),
+        ("hedge_alert_flag", "避险预警"),
+    ):
+        values = events[source] if source in events.columns else pd.Series(0, index=events.index)
+        events[label] = values.astype(int).map({1: "是", 0: ""})
+    keep = ["日期", "集合", "实际值", "预测值"]
+    for column in ("P10", "P90", "区间宽度比"):
+        if column in events.columns:
+            keep.append(column)
+    keep.extend(["高风险", "卖出预警", "避险预警"])
+    return events[keep]
 
 
 def main() -> None:
@@ -249,7 +356,7 @@ def main() -> None:
     _apply_dark_mode()
     selected_font = _configure_matplotlib_fonts()
     st.title("开源启民长期优化结果")
-    st.caption("基于 `LONG_PERF_2` 重训后的最终长期预测结果、候选排行榜与基线对比。")
+    st.caption("基于 `LONG_PERF_3` 重训后的最终长期预测结果、候选排行榜、风险区间与预警视图。")
 
     config_path = CONFIG_PATH
     if not config_path.exists():
@@ -316,8 +423,18 @@ def main() -> None:
             width="stretch",
         )
         st.markdown(
-            "每个子图展示当前 **最终选中方案** 在完整评估集上的表现；虚线表示验证集与测试集的分界。"
+            "每个子图展示当前 **最终选中方案** 在完整评估集上的表现；虚线表示验证集与测试集的分界，橙/绿/红标记分别表示高风险、卖出预警、避险预警。"
         )
+
+    st.subheader("风险预警汇总")
+    risk_summary = _risk_summary_table(selected_predictions, selection_map)
+    if risk_summary.empty:
+        st.info("当前 selected 预测文件还没有风险列，请先重跑长期 pipeline。")
+    else:
+        formatted_risk_summary = risk_summary.copy()
+        for column in ("高风险占比", "卖出预警占比", "避险预警占比", "平均区间宽度比"):
+            formatted_risk_summary[column] = formatted_risk_summary[column].round(3)
+        st.dataframe(formatted_risk_summary, width="stretch")
 
     st.subheader("候选方案排行榜")
     if candidates.empty:
@@ -327,6 +444,16 @@ def main() -> None:
         for tab, horizon_days in zip(tabs, horizon_choices, strict=True):
             with tab:
                 st.dataframe(_format_candidate_table(candidates, horizon_days), width="stretch")
+
+    st.subheader("风险事件明细")
+    risk_tabs = st.tabs([f"{h}天" for h in horizon_choices])
+    for tab, horizon_days in zip(risk_tabs, horizon_choices, strict=True):
+        with tab:
+            risk_events = _risk_event_table(selected_predictions[horizon_days])
+            if risk_events.empty:
+                st.info("当前周期没有高风险或预警事件。")
+            else:
+                st.dataframe(risk_events, width="stretch")
 
     st.subheader("最终方案 vs 基线")
     if comparison_selected.empty:
@@ -345,7 +472,7 @@ def main() -> None:
             width="stretch",
         )
 
-    st.sidebar.caption("当前页面已同步 LONG_PERF_2 的候选搜索与最终选择结果。")
+    st.sidebar.caption("当前页面已同步 LONG_PERF_3 的候选搜索、风险区间与最终选择结果。")
 
 
 if __name__ == "__main__":

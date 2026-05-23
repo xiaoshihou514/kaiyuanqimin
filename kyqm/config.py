@@ -230,7 +230,7 @@ def load_config(config_path: Path) -> KyqmConfig:
             grad_clip_norm=float(gru.get("grad_clip_norm", 1.0)),
             quantiles_enabled=bool(gru.get("quantiles_enabled", True)),
             model_output_path=Path(
-                str(gru.get("model_output_path", "data/models/gru/model.pth"))
+                str(gru.get("model_output_path", "data/models/gru/model.pt"))
             ),
             metrics_output_path=Path(
                 str(gru.get("metrics_output_path", "data/models/gru/metrics.json"))
@@ -250,7 +250,7 @@ def load_config(config_path: Path) -> KyqmConfig:
             weight_decay=float(lstm.get("weight_decay", 1e-4)),
             grad_clip_norm=float(lstm.get("grad_clip_norm", 1.0)),
             model_output_path=Path(
-                str(lstm.get("model_output_path", "data/models/lstm/model.pth"))
+                str(lstm.get("model_output_path", "data/models/lstm/model.pt"))
             ),
             metrics_output_path=Path(
                 str(lstm.get("metrics_output_path", "data/models/lstm/metrics.json"))
@@ -263,7 +263,7 @@ def load_config(config_path: Path) -> KyqmConfig:
             weekly_seasonality=bool(prophet.get("weekly_seasonality", True)),
             yearly_seasonality=bool(prophet.get("yearly_seasonality", True)),
             model_output_path=Path(
-                str(prophet.get("model_output_path", "data/models/prophet/model.pkl"))
+                str(prophet.get("model_output_path", "data/models/prophet/model.pt"))
             ),
         ),
         long=LongConfig(

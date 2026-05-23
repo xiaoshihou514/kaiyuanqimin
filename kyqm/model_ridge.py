@@ -145,7 +145,7 @@ def train_ridge_model(
     pred_val = model.predict(x_val) + val_baseline
     pred_test = model.predict(x_test) + test_baseline
 
-    with (model_output_dir / "model.pkl").open("wb") as f:
+    with (model_output_dir / "model.pt").open("wb") as f:
         pickle.dump(model, f)
 
     val_prediction_dates = val_df[TARGET_DATE_COLUMN].dt.strftime("%Y-%m-%d")
