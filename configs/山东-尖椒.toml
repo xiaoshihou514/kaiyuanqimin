@@ -1,13 +1,13 @@
 [data]
-market_prices_path = "data/market_prices__shucai__黄瓜__170130.csv"
+market_prices_path = "data/market_prices__shucai__尖椒__170150.csv"
 weather_path = "data/weather_山东.csv"
-cleaned_output_path = "data/cleaned_data.csv"
-feature_output_path = "data/feature_data.csv"
+cleaned_output_path = "data/cleaned/shandong/尖椒/cleaned_data.csv"
+feature_output_path = "data/feature/shandong/尖椒/feature_data.csv"
 province_name = "山东省"
 city_name = ""
-product_name = "黄瓜"
-companion_products = ["西红柿", "茄子", "大白菜", "青椒"]
-nearby_cucumber_provinces = ["河北省", "河南省"]
+product_name = "尖椒"
+companion_products = ["西红柿", "黄瓜", "土豆"]
+nearby_cucumber_provinces = ["河南省", "河北省"]
 forecast_horizon = 1
 start_date = "2020-01-01"
 end_date = "2026-05-21"
@@ -34,7 +34,7 @@ cv_splits = 5
 use_prophet_components = false
 use_beijing_lead_features = false
 use_refined_weather_features = false
-model_output_dir = "data/models/lgbm"
+model_output_dir = "data/models/shandong/尖椒/lgbm"
 
 [gru]
 enabled = true
@@ -49,8 +49,8 @@ patience = 15
 weight_decay = 0.0001
 grad_clip_norm = 1.0
 quantiles_enabled = true
-model_output_path = "data/models/gru/model.pt"
-metrics_output_path = "data/models/gru/metrics.json"
+model_output_path = "data/models/shandong/尖椒/gru/model.pt"
+metrics_output_path = "data/models/shandong/尖椒/gru/metrics.json"
 device = "auto"
 
 [lstm]
@@ -65,8 +65,8 @@ learning_rate = 0.001
 patience = 15
 weight_decay = 0.0001
 grad_clip_norm = 1.0
-model_output_path = "data/models/lstm/model.pt"
-metrics_output_path = "data/models/lstm/metrics.json"
+model_output_path = "data/models/shandong/尖椒/lstm/model.pt"
+metrics_output_path = "data/models/shandong/尖椒/lstm/metrics.json"
 device = "auto"
 
 [prophet]
@@ -74,7 +74,7 @@ enabled = true
 daily_seasonality = true
 weekly_seasonality = true
 yearly_seasonality = true
-model_output_path = "data/models/prophet/model.pt"
+model_output_path = "data/models/shandong/尖椒/prophet/model.pt"
 
 [long]
 enabled = true
@@ -83,16 +83,16 @@ history_window_days = 90
 anchor_step_days = 7
 augmentation_enabled = true
 augmentation_jitter_days = 3
-feature_output_path = "data/feature_data_long.csv"
-summary_output_path = "data/model_summary_long.json"
-comparison_output_path = "data/model_comparison_long.csv"
-prediction_output_dir = "data/predictions/long"
-ridge_model_output_dir = "data/models/long/ridge"
-lgbm_model_output_dir = "data/models/long/lgbm"
+feature_output_path = "data/feature/shandong/尖椒/feature_data_long.csv"
+summary_output_path = "data/summary/shandong/尖椒/model_summary_long.json"
+comparison_output_path = "data/summary/shandong/尖椒/model_comparison_long.csv"
+prediction_output_dir = "data/predictions/shandong/尖椒/long"
+ridge_model_output_dir = "data/models/shandong/尖椒/long/ridge"
+lgbm_model_output_dir = "data/models/shandong/尖椒/long/lgbm"
 
 [run]
 pipeline = "short"
 model = "all"
 seed = 42
-summary_output_path = "data/model_summary.json"
-prediction_output_dir = "data/predictions"
+summary_output_path = "data/summary/shandong/尖椒/model_summary.json"
+prediction_output_dir = "data/predictions/shandong/尖椒"
