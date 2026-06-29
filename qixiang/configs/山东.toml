@@ -4,27 +4,7 @@ end_date = "2026-05-21"
 output_path = "data/weather_山东.csv"
 cache_dir = ".cache/openmeteo"
 
-# [[cities]]
-# name = "jinan"
-# latitude = 36.67
-# longitude = 116.98
-#
-# [[cities]]
-# name = "weifang"
-# latitude = 36.71
-# longitude = 119.16
-#
-# [[cities]]
-# name = "linyi"
-# latitude = 35.10
-# longitude = 118.35
-#
-# [[cities]]
-# name = "yantai"
-# latitude = 37.54
-# longitude = 121.39
-
-
+# 山东
 [[cities]]
 name = "jinan"
 latitude = 36.67

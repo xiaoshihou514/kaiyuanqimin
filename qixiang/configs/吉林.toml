@@ -1,0 +1,25 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_吉林.csv"
+cache_dir = ".cache/openmeteo"
+
+[[cities]]
+name = "changchun"
+latitude = 43.82
+longitude = 125.32
+
+[[cities]]
+name = "jilin"
+latitude = 43.84
+longitude = 126.55
+
+[[cities]]
+name = "siping"
+latitude = 43.17
+longitude = 124.37
+
+[[cities]]
+name = "songyuan"
+latitude = 45.14
+longitude = 124.82

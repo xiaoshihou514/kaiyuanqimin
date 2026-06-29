@@ -1,0 +1,25 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_江苏.csv"
+cache_dir = ".cache/openmeteo"
+
+[[cities]]
+name = "yancheng"
+latitude = 33.35
+longitude = 120.16
+
+[[cities]]
+name = "xuzhou"
+latitude = 34.26
+longitude = 117.18
+
+[[cities]]
+name = "nantong"
+latitude = 31.98
+longitude = 120.89
+
+[[cities]]
+name = "huaian"
+latitude = 33.61
+longitude = 119.03

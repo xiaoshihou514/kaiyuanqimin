@@ -1,0 +1,26 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_河南.csv"
+cache_dir = ".cache/openmeteo"
+
+# 河南
+[[cities]]
+name = "zhoukou"
+latitude = 33.63
+longitude = 114.7
+
+[[cities]]
+name = "xinyang"
+latitude = 32.13
+longitude = 114.07
+
+[[cities]]
+name = "xinxiang"
+latitude = 35.30
+longitude = 113.93
+
+[[cities]]
+name = "luoyang"
+longitude = 112.45
+latitude = 34.62

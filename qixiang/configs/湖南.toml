@@ -1,0 +1,25 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_湖南.csv"
+cache_dir = ".cache/openmeteo"
+
+[[cities]]
+name = "changde"
+latitude = 29.03
+longitude = 111.69
+
+[[cities]]
+name = "yueyang"
+latitude = 29.37
+longitude = 113.13
+
+[[cities]]
+name = "hengyang"
+latitude = 26.90
+longitude = 112.57
+
+[[cities]]
+name = "shaoyang"
+latitude = 27.24
+longitude = 111.47

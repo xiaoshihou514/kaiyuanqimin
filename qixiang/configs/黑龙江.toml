@@ -1,0 +1,25 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_黑龙江.csv"
+cache_dir = ".cache/openmeteo"
+
+[[cities]]
+name = "suihua"
+latitude = 46.63
+longitude = 126.98
+
+[[cities]]
+name = "jiamusi"
+latitude = 46.80
+longitude = 130.32
+
+[[cities]]
+name = "qiqihar"
+latitude = 47.35
+longitude = 123.92
+
+[[cities]]
+name = "haerbin"
+latitude = 45.75
+longitude = 126.63

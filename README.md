@@ -2,6 +2,9 @@
 
 开源农产品价格预测系统。基于历史价格、气温、降水预测农产品价格长期走势。希望能够抛砖引玉，作为更强模型的基础，为中国农户生产采收起到参考作用。
 
+- 气象数据：https://open-meteo.com/
+- 价格数据：https://cif.mofcom.gov.cn/cif/html/dataCenter2021/index.html?jgnfcprd
+
 ## 运行说明
 
 ```shell

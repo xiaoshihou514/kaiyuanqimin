@@ -1,0 +1,26 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_河北.csv"
+cache_dir = ".cache/openmeteo"
+
+# 河北
+[[cities]]
+name = "shijiazhuang"
+latitude = 38.04
+longitude = 114.51
+
+[[cities]]
+name = "handan"
+latitude = 36.63
+longitude = 114.54
+
+[[cities]]
+name = "zhangjiakou"
+latitude = 40.82
+longitude = 114.88
+
+[[cities]]
+name = "qinhuangdao"
+latitude = 39.93
+longitude = 119.6

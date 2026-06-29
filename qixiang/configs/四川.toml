@@ -1,0 +1,25 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_四川.csv"
+cache_dir = ".cache/openmeteo"
+
+[[cities]]
+name = "chengdu"
+latitude = 30.57
+longitude = 104.07
+
+[[cities]]
+name = "mianyang"
+latitude = 31.47
+longitude = 104.73
+
+[[cities]]
+name = "nanchong"
+latitude = 30.80
+longitude = 106.08
+
+[[cities]]
+name = "dazhou"
+latitude = 31.21
+longitude = 107.47

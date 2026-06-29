@@ -1,0 +1,25 @@
+[weather]
+start_date = "2020-01-01"
+end_date = "2026-05-21"
+output_path = "data/weather_江西.csv"
+cache_dir = ".cache/openmeteo"
+
+[[cities]]
+name = "nanchang"
+latitude = 28.68
+longitude = 115.86
+
+[[cities]]
+name = "jiujiang"
+latitude = 29.71
+longitude = 116.00
+
+[[cities]]
+name = "yichun"
+latitude = 27.81
+longitude = 114.42
+
+[[cities]]
+name = "fuzhou"
+latitude = 27.95
+longitude = 116.36
